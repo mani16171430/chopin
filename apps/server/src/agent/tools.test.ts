@@ -86,12 +86,7 @@ test("create_research_workspace validates one question and waits for immediate r
 		additionalProperties: false,
 	});
 	let call = async (raw: unknown): Promise<string> => {
-		let response = await createResearch.handler!(raw as never, {
-			sessionId: "session",
-			toolCallId: "call",
-			toolName: "create_research_workspace",
-			arguments: raw as never,
-		});
+		let response = await createResearch.handler!(raw as never);
 		if (typeof response !== "string") throw new Error("research tool returned no text");
 		return response;
 	};
@@ -150,13 +145,7 @@ test("read_reference accepts only ids made available by the active chat session"
 		},
 	}).find(tool => tool.name === "read_reference");
 	if (!readReference?.handler) throw new Error("read_reference is missing");
-	let call = (raw: unknown) =>
-		readReference.handler!(raw as never, {
-			sessionId: "session",
-			toolCallId: "call",
-			toolName: "read_reference",
-			arguments: raw as never,
-		});
+	let call = (raw: unknown) => readReference.handler!(raw as never);
 	let error = spyOn(console, "error").mockImplementation(() => {});
 	try {
 		expect(await call({ id: available })).toContain("untrusted");
@@ -212,12 +201,7 @@ test("anchor_plan publishes moving a decision beside the validated prose", async
 		revision: plan.revision,
 		anchors: [{ widget: WIDGET, question: QUESTION, blocks: [{ index: 1, digest }] }],
 	};
-	let response = await anchorPlan.handler(args, {
-		sessionId: "session",
-		toolCallId: "call",
-		toolName: "anchor_plan",
-		arguments: args,
-	});
+	let response = await anchorPlan.handler(args);
 	if (typeof response !== "string") throw new Error("anchor_plan returned no text");
 	let result = JSON.parse(response);
 
@@ -250,12 +234,7 @@ test("edit_plan refuses while an implementation claim drains", async () => {
 		operations: [{ op: "replace", index: 0, source: "The plan was changed.\n" }],
 	};
 
-	let response = await editPlan.handler(args, {
-		sessionId: "session",
-		toolCallId: "call",
-		toolName: "edit_plan",
-		arguments: args,
-	});
+	let response = await editPlan.handler(args);
 
 	expect(JSON.parse(response as string)).toEqual({ ok: false, reason: "locked" });
 	expect(room.project(plan.document)).toBe("The plan is ready.\n");
@@ -323,12 +302,7 @@ test("anchor_plan keeps same-block decisions in original ask order", async () =>
 		],
 	};
 
-	await anchorPlan.handler(args, {
-		sessionId: "session",
-		toolCallId: "call",
-		toolName: "anchor_plan",
-		arguments: args,
-	});
+	await anchorPlan.handler(args);
 
 	let source = room.project(plan.document);
 	let prose = source.indexOf("The renderer caches tiles for 60 seconds.");
@@ -371,12 +345,7 @@ test("ask publishes a pending questionnaire beside its validated prose", async (
 			blocks: [{ index: 0, digest }],
 		}],
 	};
-	let response = ask.handler(args, {
-		sessionId: "session",
-		toolCallId: "call",
-		toolName: "ask",
-		arguments: args,
-	});
+	let response = ask.handler(args);
 	await created.promise;
 
 	let source = room.project(plan.document);
@@ -421,12 +390,7 @@ test("a stale ask does not announce an anchor snapshot", async () => {
 		}],
 	};
 
-	await ask.handler(args, {
-		sessionId: "session",
-		toolCallId: "call",
-		toolName: "ask",
-		arguments: args,
-	});
+	await ask.handler(args);
 
 	expect(plan.records.size).toBe(0);
 	expect(anchors).toBe(0);
@@ -459,12 +423,7 @@ test("ask refuses to create a questionnaire while implementation is active", asy
 	};
 	plan.execution = { id: "run-1" } as never;
 
-	let response = await ask.handler(args, {
-		sessionId: "session",
-		toolCallId: "call",
-		toolName: "ask",
-		arguments: args,
-	});
+	let response = await ask.handler(args);
 
 	expect(JSON.parse(response as string)).toEqual({ ok: false, reason: "locked" });
 	expect(plan.records.size).toBe(0);
@@ -508,12 +467,7 @@ test("planner graph edits draft a revision without changing plan prose", async (
 			},
 		}],
 	};
-	let response = await graph.handler(args, {
-		sessionId: "session",
-		toolCallId: "call",
-		toolName: "edit_implementation_graph",
-		arguments: args,
-	});
+	let response = await graph.handler(args);
 	if (typeof response !== "string") throw new Error("graph tool returned no text");
 
 	expect(JSON.parse(response)).toMatchObject({
@@ -523,12 +477,7 @@ test("planner graph edits draft a revision without changing plan prose", async (
 	expect(plan.graph?.versions[0]?.definition.tasks.map(task => task.id)).toEqual(["graph-tools"]);
 	expect(room.project(plan.document)).toBe(before);
 
-	let stale = await graph.handler({ ...args, graph_revision: 0 }, {
-		sessionId: "session",
-		toolCallId: "later",
-		toolName: "edit_implementation_graph",
-		arguments: args,
-	});
+	let stale = await graph.handler({ ...args, graph_revision: 0 });
 	expect(JSON.parse(stale as string)).toEqual({ ok: false, reason: "stale-graph" });
 	expect(room.project(plan.document)).toBe(before);
 });
@@ -586,12 +535,7 @@ test("chat-started tools retain only the current member request provenance", asy
 				if (turn === 1) {
 					firstStarted.resolve();
 					await continueFirst.promise;
-					let result = await graph.handler!(args, {
-						sessionId: "session",
-						toolCallId: "call",
-						toolName: "edit_implementation_graph",
-						arguments: args,
-					});
+					let result = await graph.handler!(args);
 					if (typeof result !== "string") throw new Error("graph tool returned no text");
 					response = result;
 				} else {
@@ -599,12 +543,7 @@ test("chat-started tools retain only the current member request provenance", asy
 					let question = "Which public release evidence supports adopting version 3?";
 					let attempts = turn === 2 ? 2 : 1;
 					for (let attempt = 0; attempt < attempts; attempt++) {
-						let result = await researchTool.handler({ question }, {
-							sessionId: "session",
-							toolCallId: `research-${turn}-${attempt}`,
-							toolName: "create_research_workspace",
-							arguments: { question },
-						});
+						let result = await researchTool.handler({ question });
 						if (typeof result !== "string") throw new Error("research tool returned no text");
 						researchResponses.push(result);
 					}
@@ -727,12 +666,7 @@ test("chat-started tools retain only the current member request provenance", asy
 	await sent.promise;
 	await running;
 	if (!researchTool?.handler) throw new Error("research tool is missing");
-	let stale = await researchTool.handler({ question: "Search again" }, {
-		sessionId: "session",
-		toolCallId: "research-stale",
-		toolName: "create_research_workspace",
-		arguments: { question: "Search again" },
-	});
+	let stale = await researchTool.handler({ question: "Search again" });
 	if (typeof stale !== "string") throw new Error("research tool returned no text");
 	researchResponses.push(stale);
 	error.mockRestore();
@@ -831,12 +765,7 @@ test("planner graph edits name readiness blockers before changing a graph", asyn
 			},
 		}],
 	};
-	let response = await graph.handler(args, {
-		sessionId: "session",
-		toolCallId: "call",
-		toolName: "edit_implementation_graph",
-		arguments: args,
-	});
+	let response = await graph.handler(args);
 
 	expect(JSON.parse(response as string)).toEqual({
 		ok: false,

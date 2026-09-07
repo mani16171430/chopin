@@ -14,9 +14,11 @@ export declare namespace Chat {
 	export type Incoming =
 		| Request<Send>
 		| Request<Abort>
-		| Request<Unqueue>;
+		| Request<Unqueue>
+		| Request<SessionStart>
+		| Request<SessionEnd>;
 
-	export type Outgoing = History | Message | Delta | Tool | State | Queue | Sent;
+	export type Outgoing = History | Message | Delta | Tool | State | Queue | Sent | Session;
 
 	/** Who said something. The agent is not a member, so it is named apart. */
 	export type Author =
@@ -143,4 +145,27 @@ export declare namespace Chat {
 
 	/** Withdraw a queued message. Only its author may. */
 	export type Unqueue = KIND<"chat:unqueue"> & { id: string };
+
+	/**
+	 * Turn the room's shared Planner session on.
+	 *
+	 * While it is on, every member's message is treated as addressed to the
+	 * Planner — no per-message `@chopin` needed — so the room can jam with the
+	 * model together. Shared and visible to the whole room. Ephemeral: resets
+	 * on a server restart or when the room is evicted.
+	 */
+	export type SessionStart = KIND<"chat:session-start">;
+
+	/** Turn the room's shared Planner session off. */
+	export type SessionEnd = KIND<"chat:session-end">;
+
+	/**
+	 * The room's session state — broadcast to the whole room on a toggle and
+	 * told to a socket that has just joined, so every open tab reflects it.
+	 */
+	export type Session = KIND<"chat:session"> & {
+		active: boolean;
+		/** The handle of whoever last toggled it, if known. */
+		by?: string;
+	};
 }

@@ -10,11 +10,10 @@
 		"types": "tsgo --noEmit --skipLibCheck"
 	},
 	"dependencies": {
+		"@anthropic-ai/sdk": "catalog:anthropic",
 		"@chopin/dialect": "workspace:*",
 		"@chopin/protocol": "workspace:*",
 		"@chopin/question": "workspace:*",
-		"@github/copilot": "catalog:copilot",
-		"@github/copilot-sdk": "catalog:copilot",
 		"@lexical/headless": "catalog:mdx",
 		"@lexical/yjs": "catalog:mdx",
 		"lexical": "catalog:mdx",

@@ -83,12 +83,15 @@ export function Chat(
 	let [sendError, setSendError] = useState<string>();
 	let [selection, setSelection] = useState({ start: 0, end: 0 });
 	let [dismissedPicker, setDismissedPicker] = useState<string>();
+	let [sessionActive, setSessionActive] = useState(false);
 	let textarea = useRef<HTMLTextAreaElement>(null);
 	let pendingCaret = useRef<number | undefined>(undefined);
 	let pendingEdit = useRef<{ start: number; end: number } | undefined>(undefined);
 	let submission = useRef<object | undefined>(undefined);
 	let draftRef = useRef(draft);
 	draftRef.current = draft;
+	let sessionRef = useRef(sessionActive);
+	sessionRef.current = sessionActive;
 	let pickerId = useId();
 	let instructionsId = useId();
 	let synchronized = useRef<Socket | undefined>(undefined);
@@ -96,7 +99,9 @@ export function Chat(
 	let reportedBusy = useRef(false);
 	activity.current = onActivity;
 	// A socket opens before its fresh transcript arrives, and reconnects reuse
-	// the same Wire. Only that transcript makes this composer current.
+	// the same Wire. Only that transcript makes this composer current. The
+	// session state is room-wide and re-synced from the server, so a reconnect
+	// shows whatever the room currently has — no local reset needed.
 	if (!connected) synchronized.current = undefined;
 	let composerReady = connected && synchronized.current === wire;
 	let detected = referencesEnabled && composerReady && !submitting
@@ -194,6 +199,7 @@ export function Chat(
 				setTurn(frame.turn);
 			}),
 			wire.on<Wire.Queue>("chat:queue", frame => setQueue(frame.waiting)),
+			wire.on<Wire.Session>("chat:session", frame => setSessionActive(frame.active)),
 		];
 
 		return () => {
@@ -232,6 +238,7 @@ export function Chat(
 			agent,
 			submitted.requestId,
 			referencesEnabled,
+			sessionRef.current,
 		);
 		if (!payload) return;
 		let token = {};
@@ -400,7 +407,9 @@ export function Chat(
 								start: event.currentTarget.selectionStart,
 								end: event.currentTarget.selectionEnd,
 							})}
-						placeholder={`Use ${MENTION} to ask Chopin`}
+						placeholder={sessionActive
+							? "Chopin session on — every message goes to the Planner"
+							: `Use ${MENTION} to ask Chopin`}
 						ref={textarea}
 						rows={3}
 						value={draft.text}
@@ -411,6 +420,32 @@ export function Chat(
 							<TerminalAlert className="mr-auto min-w-0 truncate text-sm text-destructive-ink">
 								{sendError}
 							</TerminalAlert>
+						)}
+						{agent && (
+							<label
+								className="flex cursor-pointer items-center gap-1.5"
+								title={sessionActive
+									? "End Chopin session — messages need @chopin again"
+									: "Start Chopin session — everyone's message goes to the Planner"}
+							>
+								<span className="text-[12px] text-subtle select-none">
+									Chopin
+								</span>
+								<input
+									aria-label={sessionActive
+										? "End Chopin session"
+										: "Start Chopin session"}
+									checked={sessionActive}
+									className="session-toggle"
+									disabled={!composerReady}
+									onChange={() => {
+										if (!wire || !composerReady) return;
+										wire.send(sessionActive ? "chat:session-end" : "chat:session-start");
+									}}
+									role="switch"
+									type="checkbox"
+								/>
+							</label>
 						)}
 						{agent && busy && (
 							<button

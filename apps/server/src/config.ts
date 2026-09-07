@@ -41,10 +41,25 @@ export type Config = {
 	storage: StorageConfig;
 	/** GitHub identity and short-lived OAuth attempt encryption. */
 	auth: AuthConfig;
+	/** The Anthropic-Messages-API-compatible gateway the planner calls. */
+	litellm: LiteLLMConfig;
+};
+
+export type LiteLLMConfig = {
+	baseUrl: string;
+	apiKey: string;
 };
 
 const DEFAULT_PORT = 8787;
-const DEFAULT_MODEL = "claude-sonnet-4.6";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
+const DEFAULT_LITELLM_BASE_URL = "https://llm-gateway.razorpay.com";
+
+function litellm(agent: boolean): LiteLLMConfig {
+	let baseUrl = process.env.LITELLM_BASE_URL || DEFAULT_LITELLM_BASE_URL;
+	let apiKey = process.env.LITELLM_API_KEY || "";
+	if (agent && !apiKey) throw new Error("LITELLM_API_KEY is required when AGENT is on.");
+	return { baseUrl, apiKey };
+}
 
 function port(): number {
 	let raw = process.env.PORT;
@@ -86,6 +101,7 @@ export function load(): Config {
 		devClient: process.env.DEV_CLIENT || undefined,
 		storage: storage(),
 		auth: loadAuth(),
+		litellm: litellm(agent),
 	};
 }
 

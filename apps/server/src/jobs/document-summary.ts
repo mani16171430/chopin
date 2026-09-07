@@ -6,7 +6,7 @@ import { assert } from "@chopin/dialect/validate";
 
 import * as Agent from "../agent/client";
 
-import type { Tool } from "@github/copilot-sdk";
+import type { Tool } from "../agent/types";
 import type { Config } from "../config";
 import type { DocumentTarget } from "../plan/service";
 import type { JsonValue } from "../storage/model";
@@ -233,7 +233,7 @@ class CopilotSummaryEngine {
 				required: ["request_id", "description"],
 				additionalProperties: false,
 			},
-			handler(raw: unknown) {
+			async handler(raw: unknown) {
 				let current = slot;
 				if (!current || !raw || typeof raw !== "object" || Array.isArray(raw)) {
 					throw new Error("No description request is active.");

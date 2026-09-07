@@ -2,10 +2,15 @@ import { createHash } from "node:crypto";
 import * as limits from "@chopin/dialect/limits";
 
 import * as Agent from "../agent/client";
-import { PUBLIC_WEB_SEARCH_SERVER, PUBLIC_WEB_SEARCH_TOOL } from "../agent/permissions";
 import { JobExecutionError } from "./registry";
 
-import type { Tool } from "@github/copilot-sdk";
+// Historically the name/tool-id pair for the Copilot-hosted GitHub MCP web
+// search server. Kept only for `isPublicWebSearch` below — see the KNOWN GAP
+// comment further down; no session registers a tool matching these anymore.
+const PUBLIC_WEB_SEARCH_SERVER = "github-mcp-server";
+const PUBLIC_WEB_SEARCH_TOOL = "web_search";
+
+import type { Tool } from "../agent/types";
 import type { Config } from "../config";
 import type { JsonValue } from "../storage/model";
 import type { JobDefinition, JobExecution, JobExecutionDiagnostic } from "./registry";
@@ -926,14 +931,9 @@ async function stage(
 		resultInvalid: false,
 		webSearchDenied: false,
 	};
+	// `observed` stays: it's still read by `publicResearchResultFailure` below.
+	// Nothing populates it anymore — see the KNOWN GAP comment further down.
 	let observed = new Set<string>();
-	let addObserved = (url: string) => {
-		if (observed.size < MAX_PROVENANCE_URLS) observed.add(url);
-	};
-	let webCalls = new Set<string>();
-	let completedWebCalls = new Set<string>();
-	let hostedCalls = new Set<number>();
-	let hostedCompleted = new Set<number>();
 	let tool = {
 		name: "submit_research_result",
 		description: "Submit the one structured result for this research stage.",
@@ -946,7 +946,7 @@ async function stage(
 			required: ["request_id", "result"],
 			additionalProperties: false,
 		},
-		handler(raw: unknown) {
+		async handler(raw: unknown) {
 			let current = slot;
 			if (!current || !raw || typeof raw !== "object" || Array.isArray(raw)) {
 				throw new Error("no research stage is active");
@@ -1032,62 +1032,15 @@ async function stage(
 	let done = Promise.withResolvers<JsonValue>();
 	let release = agent.session.on(event => {
 		if (!slot) return;
-		if (event.type === "tool.execution_start") {
-			if (isPublicWebSearch(event.data) && !webCalls.has(event.data.toolCallId)) {
-				webCalls.add(event.data.toolCallId);
-				metrics.webCalls++;
-			}
-		} else if (
-			event.type === "tool.execution_complete"
-			&& webCalls.has(event.data.toolCallId)
-			&& !completedWebCalls.has(event.data.toolCallId)
-		) {
-			completedWebCalls.add(event.data.toolCallId);
-			if (!event.data.success) {
-				metrics.webFailures++;
-				return;
-			}
-			metrics.webSuccesses++;
-			let sources = event.data.result?.citableSources ?? [];
-			metrics.citableSources = Math.min(
-				MAX_PROVENANCE_URLS,
-				metrics.citableSources + sources.length,
-			);
-			for (let url of observedWebSourceUrls(event.data.result)) addObserved(url);
-			metrics.outputSources = observed.size;
-		} else if (
-			event.type === "assistant.server_tool_progress"
-			&& event.data.kind === "web_search"
-		) {
-			if (!hostedCalls.has(event.data.outputIndex)) {
-				hostedCalls.add(event.data.outputIndex);
-				metrics.webCalls++;
-				metrics.hostedCalls++;
-			}
-			if (event.data.status === "completed" && !hostedCompleted.has(event.data.outputIndex)) {
-				hostedCompleted.add(event.data.outputIndex);
-				metrics.webSuccesses++;
-				metrics.hostedCompleted++;
-			}
-		} else if (
-			event.type === "assistant.message" && event.data.citations
-			&& hostedCompleted.size > 0
-		) {
-			metrics.citableSources = Math.min(
-				MAX_PROVENANCE_URLS,
-				metrics.citableSources + event.data.citations.sources.length,
-			);
-			for (let [index, source] of event.data.citations.sources.entries()) {
-				if (index >= MAX_PROVENANCE_NODES || observed.size >= MAX_PROVENANCE_URLS) break;
-				if (!source.url) continue;
-				try {
-					addObserved(publicUrl(source.url));
-				} catch {
-					// Malformed metadata never becomes citable provenance.
-				}
-			}
-			metrics.outputSources = observed.size;
-		} else if (event.type === "session.error") {
+		// KNOWN GAP (see agent/client.ts#publicResearchConfiguration): there is
+		// currently no web-search tool wired into any session, Copilot-MCP-based
+		// or native, so `webCalls`/`hostedCalls`/citation metrics never advance
+		// and `publicResearchResultFailure` below correctly and honestly reports
+		// "web-search-not-invoked" for every public-research attempt until that
+		// gap is closed. `webCalls`, `hostedCalls`, `completedWebCalls`,
+		// `isPublicWebSearch` and `observedWebSourceUrls` are kept (unused here)
+		// for that follow-up to wire back in, rather than deleted.
+		if (event.type === "session.error") {
 			slot.reject(
 				publicWeb
 					? publicStageError("public-session-failed", metrics)

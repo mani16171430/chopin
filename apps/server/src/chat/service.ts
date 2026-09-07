@@ -30,7 +30,7 @@ import { annotatedText, compose, referenceCatalog, remember } from "./address";
 import { broadcast, fail, reply, tell } from "../wire";
 
 import type { Server } from "bun";
-import type { SessionEvent } from "@github/copilot-sdk";
+import type { SessionEvent } from "../agent/types";
 import type { Chat as Wire, Request } from "@chopin/protocol";
 import type { Config } from "../config";
 import type { HostedAuth } from "../auth/routes";
@@ -161,6 +161,22 @@ export type Chat = {
 	 * than losing it.
 	 */
 	backscroll: Said[];
+	/**
+	 * The room's shared Planner session.
+	 *
+	 * Anyone in the room may toggle it; while it is on, every member's message
+	 * goes to the Planner without needing a mention. Shared and visible — the
+	 * state is broadcast to the whole room so every open tab reflects it.
+	 * Ephemeral — resets on restart and when the room is evicted.
+	 */
+	session: SharedSession;
+};
+
+type SharedSession = {
+	/** Whether every member's message is currently addressed to the Planner. */
+	active: boolean;
+	/** Who last toggled it, so the room can see who did. */
+	by?: string;
 };
 
 export function create(): Chat {
@@ -175,6 +191,7 @@ export function create(): Chat {
 		timings: new Map(),
 		referenceCache: new Map(),
 		backscroll: [],
+		session: { active: false },
 	};
 }
 
@@ -200,6 +217,7 @@ export function restore(entries: Wire.Entry[]): Chat {
 		timings: new Map(),
 		referenceCache: new Map(),
 		backscroll: [],
+		session: { active: false },
 	};
 }
 
@@ -518,6 +536,17 @@ async function processSend(context: Room, ws: Socket, msg: Request<Wire.Send>): 
 			text,
 			...(references?.length ? { references } : {}),
 		});
+		// While the room's session is on, every member's message is addressed to
+		// the Planner — no mention needed. The entry is already in the shared
+		// transcript; here it becomes a turn, or queues behind one.
+		if (chat.session.active && context.config.agent) {
+			fireSessionTurn(context, ws, {
+				entryId: entry.id,
+				handle,
+				text,
+				...(references?.length ? { references } : {}),
+			});
+		}
 		return;
 	}
 	if (!context.config.agent) {
@@ -683,7 +712,83 @@ export function unqueue(context: Room, ws: Socket, msg: Request<Wire.Unqueue>): 
 	queued(chat, server, room);
 }
 
-/** Stop the running turn. Anyone may, and the transcript says who did. */
+/**
+ * Turn on this user's private Planner session for this room.
+ *
+ * A shared session changes every member's sends: while it is on, any member's
+ * message is treated as addressed to the Planner, so a room can jam with the
+ * model without repeating a mention. It is room-wide and visible — the state
+ * is broadcast so every open tab reflects it — and it is ephemeral: it ends on
+ * `chat:session-end`, and it does not survive a server restart or room
+ * eviction.
+ */
+export function sessionStart(context: Room, ws: Socket, msg: Request<Wire.SessionStart>): void {
+	let { chat, room, server } = context;
+	if (chat.closed) return fail(ws, msg.rid, "chat is closed");
+	if (!context.config.agent) {
+		return fail(ws, msg.rid, "the agent is not running");
+	}
+	chat.session = { active: true, by: ws.data.handle };
+	// One reply to whoever asked, and the same state to the rest of the room.
+	reply(ws, msg.rid, { kind: "chat:session", ts: 0, active: true, by: ws.data.handle });
+	broadcast(server, room, { kind: "chat:session", ts: 0, active: true, by: ws.data.handle });
+}
+
+/** Turn off the room's shared Planner session. */
+export function sessionEnd(context: Room, ws: Socket, msg: Request<Wire.SessionEnd>): void {
+	let { chat, room, server } = context;
+	chat.session = { active: false, by: ws.data.handle };
+	reply(ws, msg.rid, { kind: "chat:session", ts: 0, active: false, by: ws.data.handle });
+	broadcast(server, room, { kind: "chat:session", ts: 0, active: false, by: ws.data.handle });
+}
+
+/** The room's session state for a socket that has just joined. */
+export function sessionGreet(chat: Chat, ws: Socket): void {
+	if (chat.session.active) {
+		tell(ws, { kind: "chat:session", ts: 0, active: true, by: chat.session.by });
+	}
+}
+
+/**
+ * Start a turn for a message sent while the room's shared session is on.
+ *
+ * The entry is already in the shared transcript from the send itself; here it
+ * becomes a turn, or queues behind a running one. There is no quiet-period
+ * batching — each message goes to the Planner as it is sent.
+ */
+function fireSessionTurn(context: Room, ws: Socket, said: Said): void {
+	let { chat } = context;
+	if (chat.closed || !chat.session.active) return;
+
+	if (chat.busy) {
+		// A turn is already running; queue this message behind it.
+		if (chat.waiting.length >= MAX_QUEUE) return;
+		chat.waiting.push({
+			id: ulid(),
+			handle: said.handle,
+			text: said.text,
+			...(said.references?.length ? { references: said.references } : {}),
+			sessionId: context.claimantSessionId,
+			userId: ws.data.principalId,
+		});
+		return queued(chat, context.server, context.room);
+	}
+
+	chat.busy = true;
+	chat.turn = { id: ulid(), handle: said.handle, started: now(), responded: false };
+	state(chat, context.server, context.room);
+	startRun(
+		context,
+		said.handle,
+		said.text,
+		undefined,
+		context.claimantSessionId,
+		true,
+		{ entryId: said.entryId ?? ulid(), userId: ws.data.principalId },
+		said.references,
+	);
+}
+
 export async function abort(context: Room, ws: Socket): Promise<void> {
 	let { chat, room, server } = context;
 	if (!chat.busy || !chat.agent) return;

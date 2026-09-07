@@ -1,4 +1,4 @@
-import type { Tool } from "@github/copilot-sdk";
+import type { Tool } from "./types";
 
 export type HostedRepository = {
 	id: string;
@@ -264,6 +264,136 @@ export function repositoryTools(options: Options): Tool[] {
 							}]
 							: [];
 					});
+				}),
+		},
+		{
+			name: "list_pull_requests",
+			description: "List pull requests in the selected repository, most recently updated first.",
+			parameters: {
+				type: "object",
+				properties: {
+					state: { type: "string", enum: ["open", "closed", "all"] },
+					limit: { type: "integer", minimum: 1, maximum: 50 },
+				},
+				additionalProperties: false,
+			},
+			skipPermission: true,
+			handler: raw =>
+				answer(async () => {
+					let input = raw as Record<string, unknown>;
+					let state = input.state === "closed" || input.state === "all" ? input.state : "open";
+					let limit = bounded(input.limit, 20, 50);
+					let value = await request(
+						`${root}/pulls`,
+						new URLSearchParams({
+							state,
+							sort: "updated",
+							direction: "desc",
+							per_page: String(limit),
+						}),
+					);
+					if (!Array.isArray(value)) throw new Error("GitHub returned invalid pull request list");
+					return value.slice(0, limit).flatMap(entry => {
+						let item = object(entry);
+						let user = object(item?.user);
+						return item && typeof item.number === "number"
+							? [{
+								number: item.number,
+								title: item.title,
+								state: item.state,
+								draft: item.draft === true,
+								author: user?.login,
+								url: item.html_url,
+								updated_at: item.updated_at,
+							}]
+							: [];
+					});
+				}),
+		},
+		{
+			name: "pull_request_read",
+			description: "Read one pull request in the selected repository by number, including its "
+				+ "description, merge state, and change summary.",
+			parameters: {
+				type: "object",
+				properties: { number: { type: "integer", minimum: 1 } },
+				required: ["number"],
+				additionalProperties: false,
+			},
+			skipPermission: true,
+			handler: raw =>
+				answer(async () => {
+					let input = raw as Record<string, unknown>;
+					if (typeof input.number !== "number" || !Number.isSafeInteger(input.number)) {
+						throw new Error("number must be an integer");
+					}
+					let value = object(await request(`${root}/pulls/${input.number}`));
+					if (!value) throw new Error("GitHub returned an invalid pull request");
+					let user = object(value.user);
+					return {
+						number: value.number,
+						title: value.title,
+						state: value.state,
+						draft: value.draft === true,
+						merged: value.merged === true,
+						author: user?.login,
+						url: value.html_url,
+						body: typeof value.body === "string" ? value.body.slice(0, 10_000) : undefined,
+						base: object(value.base)?.ref,
+						head: object(value.head)?.ref,
+						additions: value.additions,
+						deletions: value.deletions,
+						changed_files: value.changed_files,
+						created_at: value.created_at,
+						updated_at: value.updated_at,
+					};
+				}),
+		},
+		{
+			name: "search_pull_requests",
+			description:
+				"Search pull requests within the selected repository only, by title or description terms.",
+			parameters: {
+				type: "object",
+				properties: {
+					terms: { type: "string" },
+					limit: { type: "integer", minimum: 1, maximum: 50 },
+				},
+				required: ["terms"],
+				additionalProperties: false,
+			},
+			skipPermission: true,
+			handler: raw =>
+				answer(async () => {
+					let input = raw as Record<string, unknown>;
+					let terms = text(input.terms, "terms", 200).replace(/[\r\n]/g, " ");
+					let limit = bounded(input.limit, 20, 50);
+					let value = object(
+						await request(
+							"/search/issues",
+							new URLSearchParams({
+								q: `${terms} is:pr repo:${options.repository.owner}/${options.repository.name}`,
+								per_page: String(limit),
+							}),
+						),
+					);
+					if (!value || !Array.isArray(value.items)) {
+						throw new Error("GitHub returned invalid pull request search results");
+					}
+					let matches = value.items.flatMap(entry => {
+						let item = object(entry);
+						let user = object(item?.user);
+						return item && typeof item.number === "number"
+							? [{
+								number: item.number,
+								title: item.title,
+								state: item.state,
+								author: user?.login,
+								url: item.html_url,
+							}]
+							: [];
+					});
+					return { matches };
 				}),
 		},
 	];

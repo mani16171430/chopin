@@ -10,6 +10,7 @@ const REQUIRED = {
 	GITHUB_APP_CLIENT_ID: "client-id",
 	GITHUB_APP_CLIENT_SECRET: "client-secret",
 	SESSION_ENCRYPTION_KEY: "11".repeat(32),
+	LITELLM_API_KEY: "test-litellm-key",
 };
 
 function configured(overrides: Record<string, string | undefined> = {}) {

@@ -51,6 +51,7 @@ import type { ChannelRecord, Lease } from "./storage/model";
 import type { AuthorizationResult, Socket, SocketData } from "./wire";
 
 const config = load();
+Agent.configure(config.litellm);
 const storage = createStorage(config.storage);
 const router = new Router();
 
@@ -270,6 +271,7 @@ async function receive(ws: Socket, raw: string): Promise<void> {
 				Questions.greet(opened, ws);
 				Comments.greet(opened, ws);
 				Chat.greet(opened.chat, ws);
+				Chat.sessionGreet(opened.chat, ws);
 			} catch (err) {
 				fail(ws, frame.rid, err instanceof Error ? err.message : "cannot open plan");
 			}
@@ -298,6 +300,14 @@ async function receive(ws: Socket, raw: string): Promise<void> {
 
 		case "chat:unqueue":
 			if (room.plan) Chat.unqueue(chat(room, ws), ws, frame);
+			return;
+
+		case "chat:session-start":
+			if (room.plan) Chat.sessionStart(chat(room, ws), ws, frame);
+			return;
+
+		case "chat:session-end":
+			if (room.plan) Chat.sessionEnd(chat(room, ws), ws, frame);
 			return;
 
 		case "question:open":

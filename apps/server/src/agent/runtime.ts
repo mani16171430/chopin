@@ -1,222 +1,261 @@
-import type { CopilotClient, CopilotSession, SessionConfig } from "@github/copilot-sdk";
+/**
+ * The agentic loop.
+ *
+ * Replaces the Copilot SDK's `CopilotClient`/`CopilotSession`. There is no
+ * subprocess and no external runtime to start or stop — a "session" here is
+ * just an in-memory Anthropic Messages conversation plus a tool-calling
+ * loop, run directly against the configured LiteLLM gateway.
+ *
+ * The external shape (`open`/`discard`/`shutdown`) is kept close to the old
+ * `Runtime` class so `agent/client.ts` did not have to change how it is
+ * used, only how sessions are built.
+ */
 
-export type RuntimeClient = Pick<
-	CopilotClient,
-	"createSession" | "deleteSession" | "forceStop" | "start" | "stop"
->;
+import Anthropic from "@anthropic-ai/sdk";
+
+import type { MessageParam, ToolUnion } from "@anthropic-ai/sdk/resources/messages";
+import type { Session, SessionEvent, Tool, Unsubscribe } from "./types";
+
+const DEFAULT_MAX_TOKENS = 8_192;
+/** Safety bound on tool-call round-trips within one turn; a runaway loop is a bug, not a feature. */
+const MAX_TOOL_ITERATIONS = 25;
+
+export type GateResult = { allowed: boolean; feedback?: string };
+
+export type SessionConfig = {
+	model: string;
+	system: string;
+	tools: Tool[];
+	/** Re-checked before every tool call that doesn't set `skipPermission`. */
+	gate: (toolName: string, args: unknown) => Promise<GateResult>;
+	maxTokens?: number;
+};
+
+export type RuntimeClient = {
+	messages: Pick<Anthropic["messages"], "stream">;
+};
 
 export type RuntimeSource = {
 	client: RuntimeClient;
 	cleanup: () => void;
 };
 
-type Generation = RuntimeSource & {
-	ready: Promise<void>;
-	opening: Set<Promise<CopilotSession>>;
-	sessions: Map<string, CopilotSession>;
-	closing: Map<string, Promise<Error[]>>;
-	disposing?: Promise<Error[]>;
-};
-
-function reason(value: unknown): Error {
-	return value instanceof Error ? value : new Error(String(value));
+function toolId(): string {
+	return crypto.randomUUID();
 }
 
-function failure(message: string, errors: Error[]): Error | undefined {
-	if (errors.length === 0) return undefined;
-	if (errors.length === 1) return errors[0];
-	return new AggregateError(errors, message);
+function toAnthropicTools(tools: Tool[]): ToolUnion[] {
+	return tools.map(tool => ({
+		name: tool.name,
+		description: tool.description,
+		input_schema: tool.parameters,
+	}));
 }
 
-function bounded<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-	return new Promise<T>((resolve, reject) => {
-		let timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-		operation.then(
-			value => {
-				clearTimeout(timer);
-				resolve(value);
-			},
-			err => {
-				clearTimeout(timer);
-				reject(err);
-			},
-		);
-	});
+function textOf(content: { type: string; text?: string }[]): string {
+	return content.filter(block => block.type === "text" && typeof block.text === "string")
+		.map(block => block.text)
+		.join("");
 }
 
-/** Owns one lazily started Copilot runtime and every disposable session on it. */
-export class Runtime {
-	#create: () => RuntimeSource;
-	#operationTimeoutMs: number;
-	#generation?: Generation;
-	#owners = new WeakMap<CopilotSession, Generation>();
-	#known = new WeakSet<CopilotSession>();
-	#accepting = true;
-	#stopping?: Promise<void>;
+class LiveSession implements Session {
+	readonly sessionId: string;
+	#client: RuntimeClient;
+	#config: SessionConfig;
+	#tools: Map<string, Tool>;
+	#anthropicTools: ToolUnion[];
+	#messages: MessageParam[] = [];
+	#listeners = new Set<(event: SessionEvent) => void>();
+	#current?: ReturnType<Anthropic["messages"]["stream"]>;
+	#closed = false;
 
-	constructor(create: () => RuntimeSource, operationTimeoutMs = 10_000) {
-		this.#create = create;
-		this.#operationTimeoutMs = operationTimeoutMs;
+	constructor(client: RuntimeClient, config: SessionConfig) {
+		this.sessionId = toolId();
+		this.#client = client;
+		this.#config = config;
+		this.#tools = new Map(config.tools.map(tool => [tool.name, tool]));
+		this.#anthropicTools = toAnthropicTools(config.tools);
 	}
 
-	async open(config: SessionConfig): Promise<CopilotSession> {
-		if (!this.#accepting) throw new Error("The Copilot runtime is shutting down.");
-		let generation = this.#current();
-		let opening = (async () => {
-			await generation.ready;
-			if (!this.#accepting || this.#generation !== generation) {
-				throw new Error("The Copilot runtime is shutting down.");
+	on(listener: (event: SessionEvent) => void): Unsubscribe {
+		this.#listeners.add(listener);
+		return () => this.#listeners.delete(listener);
+	}
+
+	async send(input: { prompt: string }): Promise<void> {
+		if (this.#closed) throw new Error("session is closed");
+		this.#messages.push({ role: "user", content: input.prompt });
+		// Accepted, not finished: the loop runs in the background and reports
+		// through events, exactly like the SDK session this replaces.
+		void this.#run().catch(err => this.#emitError(err));
+	}
+
+	abort(): void {
+		this.#current?.abort();
+	}
+
+	async disconnect(): Promise<void> {
+		this.#closed = true;
+		this.#current?.abort();
+	}
+
+	async #run(): Promise<void> {
+		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+			if (this.#closed) return;
+			let messageId = toolId();
+			let stream = this.#client.messages.stream({
+				model: this.#config.model,
+				max_tokens: this.#config.maxTokens ?? DEFAULT_MAX_TOKENS,
+				system: this.#config.system,
+				messages: this.#messages,
+				tools: this.#anthropicTools,
+			});
+			this.#current = stream;
+
+			stream.on("text", delta => {
+				this.#emit({ type: "assistant.message_delta", data: { deltaContent: delta, messageId } });
+			});
+
+			let final = await stream.finalMessage();
+			this.#current = undefined;
+
+			let content = textOf(final.content as { type: string; text?: string }[]);
+			this.#emit({ type: "assistant.message", data: { content, messageId } });
+			this.#messages.push({ role: "assistant", content: final.content });
+
+			if (final.stop_reason !== "tool_use") {
+				this.#emit({ type: "session.idle", data: {} });
+				return;
 			}
-			let session = await generation.client.createSession(config);
-			if (!this.#accepting || this.#generation !== generation) {
-				if (!generation.disposing) {
-					let errors = await this.#close(generation, session);
-					let cleanup = failure("The Copilot session could not be closed.", errors);
-					if (cleanup) throw cleanup;
-				}
-				throw new Error("The Copilot runtime is shutting down.");
+
+			let calls = final.content.filter(
+				(block): block is Extract<typeof block, { type: "tool_use" }> => block.type === "tool_use",
+			);
+			let results: {
+				type: "tool_result";
+				tool_use_id: string;
+				content: string;
+				is_error?: boolean;
+			}[] = [];
+			for (let call of calls) {
+				results.push(await this.#execute(call.id, call.name, call.input));
 			}
-			generation.sessions.set(session.sessionId, session);
-			this.#owners.set(session, generation);
-			this.#known.add(session);
-			return session;
-		})();
-		generation.opening.add(opening);
+			this.#messages.push({ role: "user", content: results });
+		}
+		this.#emit({
+			type: "session.error",
+			data: {
+				errorType: "runaway",
+				message: "The planner exceeded its tool-call budget for this turn.",
+			},
+		});
+	}
+
+	async #execute(
+		callId: string,
+		name: string,
+		args: unknown,
+	): Promise<{ type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }> {
+		let tool = this.#tools.get(name);
+		if (!tool) {
+			return {
+				type: "tool_result",
+				tool_use_id: callId,
+				content: `Error: unknown tool ${name}`,
+				is_error: true,
+			};
+		}
+
+		if (!tool.skipPermission) {
+			let decision = await this.#config.gate(name, args);
+			if (!decision.allowed) {
+				this.#emit({
+					type: "permission.completed",
+					data: {
+						requestId: callId,
+						toolCallId: callId,
+						result: { kind: "denied-by-gate", feedback: decision.feedback },
+					},
+				});
+				return {
+					type: "tool_result",
+					tool_use_id: callId,
+					content: decision.feedback ?? "This tool call was not permitted.",
+					is_error: true,
+				};
+			}
+		}
+
+		this.#emit({
+			type: "tool.execution_start",
+			data: { arguments: args as never, toolCallId: callId, toolName: name },
+		});
 		try {
-			return await opening;
-		} finally {
-			generation.opening.delete(opening);
+			let content = await tool.handler(args);
+			this.#emit({
+				type: "tool.execution_complete",
+				data: { success: true, toolCallId: callId, result: { content } },
+			});
+			return { type: "tool_result", tool_use_id: callId, content };
+		} catch (err) {
+			let message = err instanceof Error ? err.message : String(err);
+			this.#emit({
+				type: "tool.execution_complete",
+				data: { success: false, toolCallId: callId, error: message },
+			});
+			return {
+				type: "tool_result",
+				tool_use_id: callId,
+				content: `Error: ${message}`,
+				is_error: true,
+			};
 		}
 	}
 
-	async discard(session: CopilotSession): Promise<boolean> {
-		let generation = this.#owners.get(session);
-		if (!generation) return this.#known.has(session);
-		let errors = await this.#close(generation, session);
-		generation.sessions.delete(session.sessionId);
-		generation.closing.delete(session.sessionId);
-		this.#owners.delete(session);
-		let error = failure("The Copilot session could not be closed.", errors);
-		if (error) throw error;
-		return true;
+	#emit(event: SessionEvent): void {
+		for (let listener of this.#listeners) listener(event);
 	}
 
-	shutdown(): Promise<void> {
-		if (this.#stopping) return this.#stopping;
+	#emitError(err: unknown): void {
+		let message = err instanceof Error ? err.message : String(err);
+		this.#emit({ type: "session.error", data: { errorType: "unexpected", message } });
+	}
+}
+
+/** Owns one lazily started Anthropic client and every disposable session on it. */
+export class Runtime {
+	#create: () => RuntimeSource;
+	#source?: RuntimeSource;
+	#sessions = new Map<string, LiveSession>();
+	#accepting = true;
+
+	constructor(create: () => RuntimeSource) {
+		this.#create = create;
+	}
+
+	async open(config: SessionConfig): Promise<Session> {
+		if (!this.#accepting) throw new Error("The agent runtime is shutting down.");
+		if (!this.#source) this.#source = this.#create();
+		let session = new LiveSession(this.#source.client, config);
+		this.#sessions.set(session.sessionId, session);
+		return session;
+	}
+
+	async discard(session: Session): Promise<boolean> {
+		let known = this.#sessions.has(session.sessionId);
+		this.#sessions.delete(session.sessionId);
+		await session.disconnect().catch(() => {});
+		return known;
+	}
+
+	async shutdown(): Promise<void> {
 		this.#accepting = false;
-		let generation = this.#generation;
-		return this.#stopping = (async () => {
-			if (!generation) return;
-			let errors: Error[] = [];
-			try {
-				await bounded(
-					Promise.allSettled(generation.opening),
-					this.#operationTimeoutMs,
-					"Copilot session opening did not stop before shutdown.",
-				);
-			} catch (err) {
-				errors.push(reason(err));
-			}
-			errors.push(...await this.#dispose(generation));
-			if (this.#generation === generation) this.#generation = undefined;
-			let error = failure("The Copilot runtime could not shut down cleanly.", errors);
-			if (error) throw error;
-		})();
-	}
-
-	#current(): Generation {
-		if (this.#generation) return this.#generation;
-		let source = this.#create();
-		let generation = {
-			...source,
-			ready: Promise.resolve(),
-			opening: new Set<Promise<CopilotSession>>(),
-			sessions: new Map<string, CopilotSession>(),
-			closing: new Map<string, Promise<Error[]>>(),
-		};
-		this.#generation = generation;
-		generation.ready = Promise.resolve().then(() => generation.client.start()).catch(
-			async err => {
-				let errors = [reason(err), ...await this.#dispose(generation)];
-				if (this.#generation === generation) this.#generation = undefined;
-				throw failure("The Copilot runtime could not start.", errors)!;
-			},
-		);
-		return generation;
-	}
-
-	#close(generation: Generation, session: CopilotSession): Promise<Error[]> {
-		let existing = generation.closing.get(session.sessionId);
-		if (existing) return existing;
-		let closing = (async () => {
-			let errors: Error[] = [];
-			try {
-				await bounded(
-					Promise.resolve().then(() => session.disconnect()),
-					this.#operationTimeoutMs,
-					`Copilot session ${session.sessionId} disconnect timed out.`,
-				);
-			} catch (err) {
-				errors.push(reason(err));
-			}
-			try {
-				await bounded(
-					Promise.resolve().then(() => generation.client.deleteSession(session.sessionId)),
-					this.#operationTimeoutMs,
-					`Copilot session ${session.sessionId} deletion timed out.`,
-				);
-			} catch (err) {
-				errors.push(reason(err));
-			}
-			return errors;
-		})();
-		generation.closing.set(session.sessionId, closing);
-		return closing;
-	}
-
-	#dispose(generation: Generation): Promise<Error[]> {
-		if (generation.disposing) return generation.disposing;
-		return generation.disposing = (async () => {
-			let errors: Error[] = [];
-			let sessions = [...generation.sessions.values()];
-			let closed = await Promise.all(sessions.map(session => this.#close(generation, session)));
-			for (let index = 0; index < sessions.length; index++) {
-				let session = sessions[index]!;
-				this.#owners.delete(session);
-				errors.push(...closed[index]!);
-			}
-			generation.sessions.clear();
-			generation.closing.clear();
-			let force = false;
-			try {
-				let stopped = await bounded(
-					Promise.resolve().then(() => generation.client.stop()),
-					this.#operationTimeoutMs,
-					"Copilot runtime stop timed out.",
-				);
-				errors.push(...stopped);
-				force = stopped.length > 0;
-			} catch (err) {
-				errors.push(reason(err));
-				force = true;
-			}
-			if (force) {
-				try {
-					await bounded(
-						Promise.resolve().then(() => generation.client.forceStop()),
-						this.#operationTimeoutMs,
-						"Copilot runtime force-stop timed out.",
-					);
-				} catch (err) {
-					errors.push(reason(err));
-				}
-			}
-			try {
-				generation.cleanup();
-			} catch (err) {
-				errors.push(reason(err));
-			}
-			return errors;
-		})();
+		let sessions = [...this.#sessions.values()];
+		this.#sessions.clear();
+		await Promise.all(sessions.map(session => session.disconnect().catch(() => {})));
+		if (this.#source) {
+			this.#source.cleanup();
+			this.#source = undefined;
+		}
 	}
 }

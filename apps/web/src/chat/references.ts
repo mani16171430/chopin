@@ -275,13 +275,21 @@ export function addressedOutsideReferences(
 	return addressed(masked.join(""));
 }
 
-/** Build the trimmed wire payload without allowing display text to identify a target. */
+/**
+ * Build the trimmed wire payload without allowing display text to identify a target.
+ *
+ * `sessionActive` is the caller's own private Planner toggle: while it is on,
+ * their message goes to the Planner without needing an explicit mention. The
+ * server enforces the same override for the same principal, so a stale tab
+ * cannot disagree.
+ */
 export function chatSendPayload(
 	text: string,
 	references: ReferenceDraft[],
 	plannerEnabled: boolean,
 	requestId: string,
 	referencesEnabled = true,
+	sessionActive = false,
 ): ChatSendPayload | undefined {
 	let value = text.trim();
 	if (!value) return undefined;
@@ -316,7 +324,9 @@ export function chatSendPayload(
 	return {
 		requestId,
 		text: value,
-		to: plannerEnabled && addressedOutsideReferences(value, requests) ? "planner" : "room",
+		to: plannerEnabled && (sessionActive || addressedOutsideReferences(value, requests))
+			? "planner"
+			: "room",
 		...(requests.length > 0 ? { references: requests } : {}),
 	};
 }

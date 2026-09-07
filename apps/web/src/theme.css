@@ -704,6 +704,58 @@ body {
 	box-shadow: var(--shadow-resting);
 }
 
+/*
+ * The Chopin session switch: a slider that turns the room's shared Planner
+ * session on or off, so every member's message is addressed to the Planner
+ * without a per-message mention.
+ */
+.session-toggle {
+	appearance: none;
+	-webkit-appearance: none;
+	position: relative;
+	width: 34px;
+	height: 20px;
+	margin: 0;
+	border: 1px solid var(--color-edge);
+	border-radius: 999px;
+	background-color: var(--color-edge);
+	cursor: pointer;
+	transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.session-toggle::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 2px;
+	width: 14px;
+	height: 14px;
+	border-radius: 999px;
+	background-color: var(--color-page);
+	transform: translateY(-50%);
+	transition: transform 0.15s ease;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+}
+
+.session-toggle:checked {
+	background-color: var(--color-brand);
+	border-color: var(--color-brand);
+}
+
+.session-toggle:checked::after {
+	transform: translateY(-50%) translateX(14px);
+}
+
+.session-toggle:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+.session-toggle:focus-visible {
+	outline: 2px solid var(--focus-ring-color);
+	outline-offset: 2px;
+}
+
 .chat-composer .field:focus-within {
 	outline: 2px solid var(--color-brand);
 	outline-offset: 2px;
