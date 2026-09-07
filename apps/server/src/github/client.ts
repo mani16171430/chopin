@@ -635,7 +635,13 @@ export class GitHubClient implements GitHub {
 			if (ifNoneMatch) headers.set("if-none-match", ifNoneMatch);
 			response = await this.#fetch(url, {
 				headers,
-				redirect: "error",
+				// "manual" rather than "error": a 304 (used for conditional installation-
+				// and repository-list revalidation below) is not a redirect to follow, but
+				// Bun's fetch throws UnexpectedRedirect for it under "error" just the same
+				// as it would for an actual 301/302/303/307/308. A genuine redirect still
+				// has no Location we intend to follow, so it falls into the same failure
+				// path as any other non-ok status below.
+				redirect: "manual",
 				signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 			});
 		} catch {
