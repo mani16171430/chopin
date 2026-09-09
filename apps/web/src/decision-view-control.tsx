@@ -9,11 +9,13 @@ export function decisionAttention(previous: number, current: number): boolean {
 export function DecisionViewControl(
 	{
 		attention,
+		cadenceNeedsInput = 0,
 		onView,
 		unanswered,
 		view,
 	}: {
 		attention?: boolean;
+		cadenceNeedsInput?: number;
 		onView: (view: DecisionView) => void;
 		unanswered: number;
 		view: DecisionView;
@@ -62,6 +64,27 @@ export function DecisionViewControl(
 						<Count key={attention ? `attention-${unanswered}` : "settled"} motion={attention}>
 							{unanswered}
 						</Count>
+					</span>
+				)}
+			</button>
+			<button
+				aria-current={view === "cadence" ? "page" : undefined}
+				aria-label={cadenceNeedsInput > 0
+					? `Cadence Updates, ${cadenceNeedsInput} need input`
+					: "Cadence Updates"}
+				aria-pressed={view === "cadence"}
+				className={`btn btn-sm transition-[background-color,box-shadow,color] ${
+					view === "cadence"
+						? "bg-ground font-medium text-gray-800"
+						: "text-text-tertiary hover:bg-hover"
+				}`}
+				onClick={() => onView("cadence")}
+				type="button"
+			>
+				Cadence Updates
+				{cadenceNeedsInput > 0 && (
+					<span aria-hidden="true" className="ml-1" data-plan-cadence-count>
+						<Count>{cadenceNeedsInput}</Count>
 					</span>
 				)}
 			</button>

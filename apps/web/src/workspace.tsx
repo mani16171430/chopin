@@ -51,6 +51,7 @@ export function useWorkspaceIds(): WorkspaceIds {
 		heading: {
 			plan: workspaceHeadingId("plan", instance),
 			decisions: workspaceHeadingId("decisions", instance),
+			cadence: workspaceHeadingId("cadence", instance),
 			chat: workspaceHeadingId("chat", instance),
 		},
 		pane: { chat: `${instance}-pane-chat` },
@@ -102,17 +103,22 @@ export function useWorkspaceState(
 export type WorkspaceProps = {
 	header: ReactNode;
 	chat?: ReactNode;
+	/** Rendered at the right end of the chat pane's header, beside its toggle. */
+	chatHeaderAction?: ReactNode;
 	plan: ReactNode;
 	decisions: ReactNode;
+	cadence: ReactNode;
 	controls: ReactNode;
 	ids: WorkspaceIds;
 	mode: WorkspaceMode;
 	state: WorkspaceState;
-	view: "plan" | "decisions";
+	view: "plan" | "decisions" | "cadence";
 	onChatOpen: (open: boolean) => void;
 	onDesktopChatOpen: (open: boolean) => void;
-	onDestination: (destination: "plan" | "decisions") => void;
+	onDestination: (destination: "plan" | "decisions" | "cadence") => void;
 	unanswered: number;
+	/** Count of Cadence items awaiting human input, for the tab badge. */
+	cadenceNeedsInput?: number;
 	chatActivity: { unread: number; busy: boolean };
 	identity?: string;
 	presentation: WorkspacePresentation;
@@ -209,6 +215,9 @@ function destinationLabel(
 	if (destination === "chat" && activity.unread > 0) {
 		return `Chat, ${activity.unread} unread`;
 	}
+	if (destination === "cadence") {
+		return "Cadence Updates";
+	}
 	return destination === "chat" ? "Chat" : destination === "decisions"
 		? "Decisions"
 		: "Document";
@@ -216,7 +225,10 @@ function destinationLabel(
 
 export function Workspace(
 	{
+		cadence,
+		cadenceNeedsInput = 0,
 		chat,
+		chatHeaderAction,
 		controls,
 		ids,
 		chatActivity,
@@ -370,6 +382,11 @@ export function Workspace(
 									>
 										Chat
 									</h2>
+									{chatHeaderAction && (
+										<div className="ml-auto flex shrink-0 items-center">
+											{chatHeaderAction}
+										</div>
+									)}
 								</div>
 							)
 							: (
@@ -469,6 +486,23 @@ export function Workspace(
 									{decisions}
 								</section>
 							</ContentSwapLayer>
+							<ContentSwapLayer
+								active={presentation.documentVisible && presentation.documentView === "cadence"}
+								className="workspace-document-layer min-h-0"
+								immediately={immediately}
+								motion={contentSwapMotion}
+							>
+								<section
+									aria-labelledby={ids.heading.cadence}
+									className="h-full min-h-0"
+									data-document-view="cadence"
+								>
+									<h2 className="sr-only" id={ids.heading.cadence} tabIndex={-1}>
+										Cadence Updates
+									</h2>
+									{cadence}
+								</section>
+							</ContentSwapLayer>
 						</div>
 					</div>
 				</main>
@@ -477,7 +511,7 @@ export function Workspace(
 			{mode !== "split" && (
 				<nav
 					aria-label="Workspace view"
-					className="workspace-navigation hairline-t grid shrink-0 grid-cols-3 bg-ground p-1"
+					className="workspace-navigation hairline-t grid shrink-0 grid-cols-4 bg-ground p-1"
 				>
 					{destinations.map(destination => {
 						let active = destination === "chat"
@@ -502,6 +536,8 @@ export function Workspace(
 									? "Chat"
 									: destination === "decisions"
 									? "Decisions"
+									: destination === "cadence"
+									? "Cadence"
 									: "Document"}
 								{destination === "decisions" && unanswered > 0 && (
 									<span
@@ -510,6 +546,15 @@ export function Workspace(
 										data-motion-feedback="count"
 									>
 										{unanswered}
+									</span>
+								)}
+								{destination === "cadence" && cadenceNeedsInput > 0 && (
+									<span
+										aria-hidden="true"
+										className={`${motionContract("feedback").className} ml-1`}
+										data-motion-feedback="count"
+									>
+										{cadenceNeedsInput}
 									</span>
 								)}
 								{destination === "chat" && chatActivity.busy && (

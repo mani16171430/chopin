@@ -17,6 +17,8 @@ import {
 } from "@chopin/editor";
 
 import { Chat } from "./chat/chat";
+import { CadenceUpdates } from "./cadence/cadence";
+import { Mcps } from "./chat/mcps";
 import { rememberChannel } from "./channel-recovery";
 import { decisionAttention, DecisionViewControl } from "./decision-view-control";
 import { newestDocumentMetadata } from "./document-actions";
@@ -213,6 +215,7 @@ export function RoomWorkspace(
 	);
 	let [reveal, setReveal] = useState<{ widget: string; token: number }>();
 	let [planScrollTop, setPlanScrollTop] = useState(0);
+	let [cadenceNeedsInput, setCadenceNeedsInput] = useState(0);
 	let entries = useQuestionnaires(questions);
 	let unanswered = countUnanswered(entries);
 	let hasPlanContent = useHasPlanContent(questions);
@@ -302,7 +305,7 @@ export function RoomWorkspace(
 		}
 	};
 
-	let selectDestination = (destination: "plan" | "decisions") => {
+	let selectDestination = (destination: "plan" | "decisions" | "cadence") => {
 		selectView(destination, mode === "split");
 		dispatch({ type: "set-chat", open: false });
 	};
@@ -311,6 +314,12 @@ export function RoomWorkspace(
 		dispatch({ type: "set-desktop-chat", open });
 		if (!open) dispatch({ type: "set-chat", open: false });
 	};
+
+	let onCadenceItems = useCallback(
+		(items: { status: string }[]) =>
+			setCadenceNeedsInput(items.filter(item => item.status === "needs_input").length),
+		[],
+	);
 
 	let showPlan = (widget: string, question: string) => {
 		selectDestination("plan");
@@ -452,6 +461,13 @@ export function RoomWorkspace(
 				/>
 			}
 			chatActivity={chatActivity}
+			chatHeaderAction={
+				<Mcps
+					canManage={effectiveCanManage}
+					connected={status === "connected" && workspaceCanEdit}
+					wire={wire}
+				/>
+			}
 			header={
 				<Header
 					archivedAt={workspaceArchivedAt}
@@ -465,6 +481,7 @@ export function RoomWorkspace(
 			controls={
 				<DecisionViewControl
 					attention={attention}
+					cadenceNeedsInput={cadenceNeedsInput}
 					onView={selectDestination}
 					unanswered={unanswered}
 					view={view}
@@ -506,6 +523,15 @@ export function RoomWorkspace(
 					wire={wire}
 				/>
 			}
+			cadence={
+				<CadenceUpdates
+					connected={status === "connected" && workspaceCanEdit}
+					headingId={workspaceIds.heading.cadence}
+					onItems={onCadenceItems}
+					wire={wire}
+				/>
+			}
+			cadenceNeedsInput={cadenceNeedsInput}
 			state={workspace}
 			presentation={presentation}
 			unanswered={unanswered}

@@ -24,6 +24,7 @@ import type { Tool } from "./types";
 import type { Research } from "@chopin/protocol";
 import type { Plan } from "../plan/service";
 import type { JobService } from "../jobs/service";
+import type { ProposedCadenceUpdate } from "../storage/model";
 import type { SocketData } from "../wire";
 
 /** Every tool answers with a string; a failure is a value, not a throw. */
@@ -51,6 +52,61 @@ function researchQuestion(raw: unknown): string {
 	}
 	if (args.question.length > 4_096) throw new Error("question exceeds 4096 characters");
 	return args.question;
+}
+
+function cadenceProposals(raw: unknown): ProposedCadenceUpdate[] {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new Error("propose_cadence_updates arguments must be an object");
+	}
+	let list = (raw as Record<string, unknown>).items;
+	if (!Array.isArray(list)) throw new Error("items must be an array");
+	if (list.length > 100) throw new Error("too many cadence items");
+	return list.map((entry, index) => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+			throw new Error(`cadence item ${index} must be an object`);
+		}
+		let item = entry as Record<string, unknown>;
+		let string = (key: string, max: number, required = true): string => {
+			let value = item[key];
+			if (value === undefined && !required) return "";
+			if (typeof value !== "string" || (required && value.length < 1) || value.length > max) {
+				throw new Error(`cadence item ${index} has an invalid ${key}`);
+			}
+			return value;
+		};
+		if (item.op !== "create" && item.op !== "update") {
+			throw new Error(`cadence item ${index} has an invalid op`);
+		}
+		let confidence = item.confidence;
+		if (typeof confidence !== "number" || confidence < 0 || confidence > 1) {
+			throw new Error(`cadence item ${index} has an invalid confidence`);
+		}
+		if (!item.fields || typeof item.fields !== "object" || Array.isArray(item.fields)) {
+			throw new Error(`cadence item ${index} has invalid fields`);
+		}
+		let needs = item.needs === undefined ? [] : item.needs;
+		if (
+			!Array.isArray(needs) || needs.some(entry => typeof entry !== "string")
+			|| needs.length > 40
+		) throw new Error(`cadence item ${index} has invalid needs`);
+		let targetId = string("target_id", 200, false);
+		// An unresolved requirement forces human completion regardless of the
+		// number the agent picked — a payload missing a required id is not ready.
+		let ready = confidence >= 0.7 && needs.length === 0;
+		return {
+			team: string("team", 200, false),
+			op: item.op,
+			...(targetId ? { targetId } : {}),
+			kind: string("kind", 80),
+			title: string("title", 400),
+			fields: item.fields as Record<string, unknown>,
+			confidence,
+			needs: needs as string[],
+			status: ready ? "ready" as const : "needs_input" as const,
+			mcpServer: string("mcp_server", 64),
+			mcpTool: string("mcp_tool", 128),
+		};
+	});
 }
 
 function referenceId(raw: unknown): string {
@@ -90,6 +146,8 @@ export type Context = {
 	createResearch?: (question: string) => Promise<ResearchWorkspaceRequest>;
 	/** Reads one reference retained by this room's active Planner session. */
 	readReference?: (id: string) => Promise<unknown>;
+	/** Replaces the room's Cadence work-item proposals and broadcasts them. */
+	proposeCadence?: (items: ProposedCadenceUpdate[]) => Promise<{ count: number }>;
 };
 
 export function toolbox(context: Context): Tool[] {
@@ -409,6 +467,83 @@ export function toolbox(context: Context): Tool[] {
 								: { status: "cancelled", cancelled_by: outcome.resolver }
 						),
 					};
+				}),
+		},
+		{
+			name: "propose_cadence_updates",
+			description: "Propose the full set of Cadence work-items, sub-issues and projects that "
+				+ "should be created or updated to reflect this room's document, decisions and "
+				+ "discussion. This REPLACES the room's current proposal list, so return the complete "
+				+ "set every time.\n"
+				+ "RESOLVE FIRST, then propose. The Cadence MCP multiplexes CRUD through an "
+				+ "`operation` field on ONE tool per entity — `mcp_tool` is the entity tool "
+				+ "(`work_item`, `project`, `team`, `sprint`, `objective`, `key_result`, "
+				+ "`intake_issue`, `document`), NOT a create/update tool. Put `operation` "
+				+ "(create|update|…) inside `fields`. Almost every call needs `workspace_slug`, and "
+				+ "every work-item/project/sprint create needs a real `team_id` (a UUID). NEVER guess "
+				+ "ids: resolve `team_id` via team(operation:list), and state_id/label_ids/"
+				+ "assignee_ids/project_id via list_states / list_labels / team_member(find); run "
+				+ "work_item(operation:search) to dedupe and decide create-vs-update. Call those "
+				+ "Cadence tools yourself before proposing, and put only resolved values in `fields`.\n"
+				+ "`fields` is the COMPLETE argument object the push sends verbatim to `mcp_tool` — "
+				+ "include `operation`, `workspace_slug`, the resolved `team_id`, the entity fields "
+				+ "(name, description, priority, dates as YYYY-MM-DD, …) and any resolved ids; for an "
+				+ 'update also include the entity id (e.g. `work_item_id`). Use op "update" with '
+				+ 'target_id for an existing entity, else "create" — mirror it in `fields.operation`. '
+				+ "Group each item by the `team` it goes under (leave `team` empty only if you truly "
+				+ "cannot tell). Set `confidence` (0–1) by how fully you resolved the REQUIRED "
+				+ "arguments: use >= 0.7 only when every required argument is present and grounded "
+				+ "(real team_id, resolved ids, clear name); list every argument you could NOT resolve "
+				+ 'in `needs` (e.g. "team_id", "assignee for Jane", "target state") — a non-empty '
+				+ "`needs` forces human completion regardless of the score. Set `mcp_server` to the "
+				+ "chat's Cadence MCP server name.",
+			parameters: {
+				type: "object",
+				properties: {
+					items: {
+						type: "array",
+						maxItems: 100,
+						items: {
+							type: "object",
+							properties: {
+								team: { type: "string", maxLength: 200 },
+								op: { type: "string", enum: ["create", "update"] },
+								target_id: { type: "string", maxLength: 200 },
+								kind: { type: "string", minLength: 1, maxLength: 80 },
+								title: { type: "string", minLength: 1, maxLength: 400 },
+								fields: { type: "object" },
+								confidence: { type: "number", minimum: 0, maximum: 1 },
+								needs: {
+									type: "array",
+									maxItems: 40,
+									items: { type: "string", maxLength: 200 },
+								},
+								mcp_server: { type: "string", minLength: 1, maxLength: 64 },
+								mcp_tool: { type: "string", minLength: 1, maxLength: 128 },
+							},
+							required: [
+								"team",
+								"op",
+								"kind",
+								"title",
+								"fields",
+								"confidence",
+								"mcp_server",
+								"mcp_tool",
+							],
+							additionalProperties: false,
+						},
+					},
+				},
+				required: ["items"],
+				additionalProperties: false,
+			},
+			skipPermission: true,
+			handler: raw =>
+				answer("propose_cadence_updates", async () => {
+					if (!context.proposeCadence) throw new Error("Cadence updates are unavailable");
+					let items = cadenceProposals(raw);
+					return context.proposeCadence(items);
 				}),
 		},
 		{

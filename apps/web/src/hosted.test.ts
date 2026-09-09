@@ -23,6 +23,7 @@ const workspaceIds = {
 		chat: "workspace-chat-heading",
 		decisions: "workspace-decisions-heading",
 		plan: "workspace-plan-heading",
+		cadence: "workspace-cadence-heading",
 	},
 	pane: { chat: "workspace-chat-pane" },
 };
@@ -282,6 +283,7 @@ describe("anchored child lifecycle", () => {
 			controls: createElement("div", null, "Controls"),
 			chatActivity: { busy: false, unread: 0 },
 			decisions: createElement("div", null, "Decisions"),
+			cadence: createElement("div", null, "Cadence"),
 			header: createElement("header", null, "Parent header"),
 			identity: "parent-room",
 			ids: workspaceIds,
@@ -316,6 +318,7 @@ describe("anchored child lifecycle", () => {
 			controls: createElement("div", null, "Document controls"),
 			chatActivity: { busy: true, unread: 2 },
 			decisions: createElement("div", null, "Decisions"),
+			cadence: createElement("div", null, "Cadence"),
 			header: createElement("header", null, "Child header"),
 			identity: "child-room",
 			ids: workspaceIds,
@@ -344,12 +347,13 @@ describe("anchored child lifecycle", () => {
 		);
 	});
 
-	it("gives a compact child all three workspace destinations", () => {
+	it("gives a compact child all four workspace destinations", () => {
 		let markup = renderToStaticMarkup(createElement(Workspace, {
 			chat: createElement("div", null, "Child chat"),
 			controls: createElement("div", null, "Document controls"),
 			chatActivity: { busy: false, unread: 0 },
 			decisions: createElement("div", null, "Decisions"),
+			cadence: createElement("div", null, "Cadence"),
 			header: createElement("header", null, "Child header"),
 			identity: "child-room",
 			ids: workspaceIds,
@@ -368,10 +372,11 @@ describe("anchored child lifecycle", () => {
 			markup.indexOf("</nav>"),
 		);
 
-		expect(navigation).toContain("grid-cols-3");
+		expect(navigation).toContain("grid-cols-4");
 		expect(navigation).toContain(">Chat<");
 		expect(navigation).toContain(">Document<");
 		expect(navigation).toContain(">Decisions<");
+		expect(navigation).toContain(">Cadence<");
 	});
 
 	it("offers an X close control only inside a child document toolbar", () => {
@@ -379,6 +384,7 @@ describe("anchored child lifecycle", () => {
 			controls: createElement("div", null, "Document controls"),
 			chatActivity: { busy: false, unread: 0 },
 			decisions: createElement("div", null, "Decisions"),
+			cadence: createElement("div", null, "Cadence"),
 			header: createElement("header", null, "Workspace header"),
 			ids: workspaceIds,
 			mode: "split" as const,

@@ -71,6 +71,7 @@ describe("adaptive workspace", () => {
 			"chat",
 			"plan",
 			"decisions",
+			"cadence",
 		]);
 	});
 
@@ -87,6 +88,7 @@ describe("adaptive workspace", () => {
 			"chat",
 			"plan",
 			"decisions",
+			"cadence",
 		]);
 	});
 

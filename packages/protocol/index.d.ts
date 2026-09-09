@@ -109,6 +109,7 @@ export declare namespace Session {
 	export type Ping = KIND<"session:ping">;
 }
 
+export type { Cadence } from "./cadence";
 export type { Chat } from "./chat";
 export type { Comment } from "./comment";
 export type { Job } from "./job";
@@ -119,6 +120,7 @@ export type { Research } from "./research";
 /** Everything a client may send. */
 export type Incoming =
 	| Session.Incoming
+	| import("./cadence").Cadence.Incoming
 	| import("./chat").Chat.Incoming
 	| import("./comment").Comment.Incoming
 	| import("./job").Job.Incoming
@@ -128,6 +130,7 @@ export type Incoming =
 /** Everything a client may receive. */
 export type Outgoing =
 	| Session.Outgoing
+	| import("./cadence").Cadence.Outgoing
 	| import("./chat").Chat.Outgoing
 	| import("./comment").Comment.Outgoing
 	| import("./job").Job.Outgoing
