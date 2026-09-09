@@ -12,6 +12,7 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "catalog:anthropic",
 		"@chopin/dialect": "workspace:*",
+		"@modelcontextprotocol/sdk": "catalog:mcp",
 		"@chopin/protocol": "workspace:*",
 		"@chopin/question": "workspace:*",
 		"@lexical/headless": "catalog:mdx",

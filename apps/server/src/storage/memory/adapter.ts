@@ -8,9 +8,12 @@ import type {
 	AddUserProject,
 	AddUserProjectResult,
 	AgentState,
+	CadenceUpdate,
 	ChannelArchiveInput,
 	ChannelArchiveResult,
 	ChannelCursor,
+	ChannelMcp,
+	ChannelMcpCredential,
 	ChannelPage,
 	ChannelRecord,
 	ChannelScanCursor,
@@ -39,6 +42,8 @@ import type {
 } from "../model";
 import type {
 	BackgroundJobStore,
+	CadenceUpdateStore,
+	ChannelMcpStore,
 	ChannelStore,
 	CollaborationStore,
 	LeaseStore,
@@ -59,6 +64,16 @@ function json(value: JsonValue): JsonValue {
 
 function user(value: UserRecord): UserRecord {
 	return { ...value, createdAt: new Date(value.createdAt), updatedAt: new Date(value.updatedAt) };
+}
+
+function cadence(value: CadenceUpdate): CadenceUpdate {
+	return {
+		...value,
+		fields: { ...value.fields },
+		needs: [...value.needs],
+		createdAt: new Date(value.createdAt),
+		updatedAt: new Date(value.updatedAt),
+	};
 }
 
 function session(value: WebSession): WebSession {
@@ -127,6 +142,9 @@ export class MemoryStorage implements StorageAdapter {
 	#operations = new Map<string, Map<string, Operation>>();
 	#agents = new Map<string, AgentState>();
 	#leases = new Map<string, Lease>();
+	#channelMcps = new Map<string, Map<string, ChannelMcp>>();
+	#channelMcpCredentials = new Map<string, ChannelMcpCredential>();
+	#cadence = new Map<string, CadenceUpdate[]>();
 
 	readonly users: UserStore = {
 		put: input => {
@@ -311,6 +329,135 @@ export class MemoryStorage implements StorageAdapter {
 		assertLease: held => this.#assertLease(held),
 	});
 	readonly research: ResearchWorkspaceStore = this.#research;
+
+	readonly channelMcps: ChannelMcpStore = {
+		add: input => {
+			let byChannel = this.#channelMcps.get(input.channelId) ?? new Map<string, ChannelMcp>();
+			if (byChannel.has(input.name)) {
+				throw conflict(`channel MCP ${input.name} already exists`);
+			}
+			let record: ChannelMcp = {
+				id: crypto.randomUUID(),
+				channelId: input.channelId,
+				name: input.name,
+				url: input.url,
+				addedBy: input.addedBy,
+				createdAt: input.now,
+				updatedAt: input.now,
+			};
+			byChannel.set(input.name, record);
+			this.#channelMcps.set(input.channelId, byChannel);
+			return Promise.resolve(record);
+		},
+		remove: (channelId, name) => {
+			let byChannel = this.#channelMcps.get(channelId);
+			if (!byChannel) return Promise.resolve(false);
+			let removed = byChannel.delete(name);
+			if (removed) {
+				let prefix = `${channelId}${name}`;
+				for (let key of this.#channelMcpCredentials.keys()) {
+					if (key.startsWith(prefix)) this.#channelMcpCredentials.delete(key);
+				}
+			}
+			return Promise.resolve(removed);
+		},
+		list: channelId => {
+			let byChannel = this.#channelMcps.get(channelId);
+			return Promise.resolve(
+				byChannel ? [...byChannel.values()].sort((a, b) => a.name.localeCompare(b.name)) : [],
+			);
+		},
+		get: (channelId, name) => Promise.resolve(this.#channelMcps.get(channelId)?.get(name)),
+		setCredential: input => {
+			let key = `${input.channelId}${input.name}${input.principalId}`;
+			let previous = this.#channelMcpCredentials.get(key);
+			let record: ChannelMcpCredential = {
+				channelId: input.channelId,
+				name: input.name,
+				principalId: input.principalId,
+				sealed: new Uint8Array(input.sealed),
+				createdAt: previous?.createdAt ?? input.now,
+				updatedAt: input.now,
+			};
+			this.#channelMcpCredentials.set(key, record);
+			return Promise.resolve(record);
+		},
+		clearCredential: (channelId, name, principalId) =>
+			Promise.resolve(this.#channelMcpCredentials.delete(`${channelId}${name}${principalId}`)),
+		credential: (channelId, name, principalId) =>
+			Promise.resolve(this.#channelMcpCredentials.get(`${channelId}${name}${principalId}`)),
+		credentials: (channelId, principalId) => {
+			let prefix = `${channelId}`;
+			let suffix = `${principalId}`;
+			let rows = [...this.#channelMcpCredentials.entries()]
+				.filter(([key]) => key.startsWith(prefix) && key.endsWith(suffix))
+				.map(([, value]) => value)
+				.sort((a, b) => a.name.localeCompare(b.name));
+			return Promise.resolve(rows);
+		},
+	};
+
+	readonly cadence: CadenceUpdateStore = {
+		list: channelId => Promise.resolve((this.#cadence.get(channelId) ?? []).map(cadence)),
+		get: (channelId, id) =>
+			Promise.resolve(
+				(this.#cadence.get(channelId) ?? []).filter(row => row.id === id).map(cadence)[0],
+			),
+		replaceAll: (channelId, items, now) => {
+			let saved: CadenceUpdate[] = items.map(proposed => ({
+				id: crypto.randomUUID(),
+				channelId,
+				team: proposed.team,
+				op: proposed.op,
+				...(proposed.targetId ? { targetId: proposed.targetId } : {}),
+				kind: proposed.kind,
+				title: proposed.title,
+				fields: { ...proposed.fields },
+				confidence: proposed.confidence,
+				needs: [...(proposed.needs ?? [])],
+				status: proposed.status,
+				mcpServer: proposed.mcpServer,
+				mcpTool: proposed.mcpTool,
+				createdAt: now,
+				updatedAt: now,
+			}));
+			let ordered = [...saved].sort((a, b) =>
+				a.team.localeCompare(b.team) || a.title.localeCompare(b.title)
+			);
+			this.#cadence.set(channelId, ordered);
+			return Promise.resolve(ordered.map(cadence));
+		},
+		updateFields: (channelId, id, patch, now) => {
+			let rows = this.#cadence.get(channelId);
+			let found = rows?.find(row => row.id === id);
+			if (!found) return Promise.resolve(undefined);
+			if (patch.team !== undefined) found.team = patch.team;
+			if (patch.title !== undefined) found.title = patch.title;
+			if (patch.fields !== undefined) found.fields = { ...patch.fields };
+			if (patch.status !== undefined) found.status = patch.status;
+			if (patch.updatedBy !== undefined) found.updatedBy = patch.updatedBy;
+			found.updatedAt = now;
+			return Promise.resolve(cadence(found));
+		},
+		setStatus: (channelId, id, status, result, now) => {
+			let rows = this.#cadence.get(channelId);
+			let found = rows?.find(row => row.id === id);
+			if (!found) return Promise.resolve(undefined);
+			found.status = status;
+			found.pushedUrl = result.pushedUrl;
+			found.error = result.error;
+			if (result.targetId) found.targetId = result.targetId;
+			found.updatedAt = now;
+			return Promise.resolve(cadence(found));
+		},
+		remove: (channelId, id) => {
+			let rows = this.#cadence.get(channelId);
+			if (!rows) return Promise.resolve(false);
+			let next = rows.filter(row => row.id !== id);
+			this.#cadence.set(channelId, next);
+			return Promise.resolve(next.length !== rows.length);
+		},
+	};
 
 	readonly leases: LeaseStore = {
 		acquire: (name, owner, ttlMs) => this.#acquire(name, owner, ttlMs),

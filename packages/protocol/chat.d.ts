@@ -16,9 +16,24 @@ export declare namespace Chat {
 		| Request<Abort>
 		| Request<Unqueue>
 		| Request<SessionStart>
-		| Request<SessionEnd>;
+		| Request<SessionEnd>
+		| Request<McpAdd>
+		| Request<McpRemove>
+		| Request<McpCredential>
+		| Request<McpList>;
 
-	export type Outgoing = History | Message | Delta | Tool | State | Queue | Sent | Session;
+	export type Outgoing =
+		| History
+		| Message
+		| Delta
+		| Tool
+		| State
+		| Queue
+		| Sent
+		| Session
+		| Mcps
+		| McpAck
+		| McpCredentialAck;
 
 	/** Who said something. The agent is not a member, so it is named apart. */
 	export type Author =
@@ -167,5 +182,53 @@ export declare namespace Chat {
 		active: boolean;
 		/** The handle of whoever last toggled it, if known. */
 		by?: string;
+	};
+
+	/**
+	 * One MCP server registered on this chat.
+	 *
+	 * Definitions are shared by the channel; each member's credential for one is
+	 * held separately and never returned here.
+	 */
+	export type Mcp = {
+		name: string;
+		url: string;
+		added_by: string;
+		added_at: number;
+		/** True when the requester has stored their own credential for it. */
+		has_credential: boolean;
+	};
+
+	/** Register an MCP server on this chat. Editors only. */
+	export type McpAdd = KIND<"chat:mcp:add"> & {
+		name: string;
+		url: string;
+		/** Optional credential for the caller, sealed server-side before storage. */
+		auth?: { kind: "bearer"; token: string } | { kind: "headers"; headers: Record<string, string> };
+	};
+
+	/** Remove an MCP server from this chat. Editors only. */
+	export type McpRemove = KIND<"chat:mcp:remove"> & { name: string };
+
+	/** Set or clear the caller's own credential for one of the chat's MCPs. */
+	export type McpCredential = KIND<"chat:mcp:credential"> & {
+		name: string;
+		/** Present to set, omitted to clear. */
+		auth?: { kind: "bearer"; token: string } | { kind: "headers"; headers: Record<string, string> };
+	};
+
+	/** Read this chat's MCP list (redacted) plus which the caller has credentials for. */
+	export type McpList = KIND<"chat:mcp:list">;
+
+	/** The chat's MCP list — broadcast to the room on add/remove, told to the requester on list. */
+	export type Mcps = KIND<"chat:mcps"> & { servers: Mcp[] };
+
+	/** An MCP was added or removed — answered to the requester. */
+	export type McpAck = KIND<"chat:mcp"> & { name: string };
+
+	/** A member's credential was set or cleared — answered to that member only. */
+	export type McpCredentialAck = KIND<"chat:mcp:credential"> & {
+		name: string;
+		has_credential: boolean;
 	};
 }

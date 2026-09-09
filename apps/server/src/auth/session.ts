@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 import { GitHubError, GitHubTokenError } from "../github/client";
+import { decrypted, encrypted, imported } from "./seal";
 
 import type { GitHubTokenGrant } from "../github/client";
 import type { StorageAdapter } from "../storage/port";
@@ -9,12 +10,7 @@ import type { UserRecord, WebSession } from "../storage/model";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const ATTEMPT_TTL_MS = 10 * 60 * 1_000;
 const REFRESH_EARLY_MS = 5 * 60 * 1_000;
-const CIPHER_VERSION = 1;
-const NONCE_BYTES = 12;
 const SECRET_BYTES = 32;
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 type Clock = () => Date;
 
@@ -97,10 +93,6 @@ function hash(value: Uint8Array): Uint8Array {
 	return new Uint8Array(createHash("sha256").update(value).digest());
 }
 
-function buffer(value: Uint8Array): ArrayBuffer {
-	return value.slice().buffer as ArrayBuffer;
-}
-
 function equal(left: Uint8Array, right: Uint8Array): boolean {
 	return left.length === right.length && timingSafeEqual(left, right);
 }
@@ -139,39 +131,6 @@ function serialized(
 
 function cleared(name: string, secure: boolean, path = "/"): string {
 	return serialized(name, "", new Date(0), secure, path, 0);
-}
-
-async function imported(value: Uint8Array): Promise<CryptoKey> {
-	return crypto.subtle.importKey("raw", buffer(value), "AES-GCM", false, ["encrypt", "decrypt"]);
-}
-
-async function encrypted(key: CryptoKey, aad: string, plaintext: unknown): Promise<Uint8Array> {
-	let nonce = random(NONCE_BYTES);
-	let content = encoder.encode(JSON.stringify(plaintext));
-	let ciphertext = await crypto.subtle.encrypt(
-		{ name: "AES-GCM", iv: buffer(nonce), additionalData: buffer(encoder.encode(aad)) },
-		key,
-		buffer(content),
-	);
-	let envelope = new Uint8Array(1 + NONCE_BYTES + ciphertext.byteLength);
-	envelope[0] = CIPHER_VERSION;
-	envelope.set(nonce, 1);
-	envelope.set(new Uint8Array(ciphertext), 1 + NONCE_BYTES);
-	return envelope;
-}
-
-async function decrypted(key: CryptoKey, aad: string, envelope: Uint8Array): Promise<unknown> {
-	if (envelope.length <= 1 + NONCE_BYTES || envelope[0] !== CIPHER_VERSION) {
-		throw new Error("bad envelope");
-	}
-	let nonce = envelope.slice(1, 1 + NONCE_BYTES);
-	let ciphertext = envelope.slice(1 + NONCE_BYTES);
-	let plaintext = await crypto.subtle.decrypt(
-		{ name: "AES-GCM", iv: buffer(nonce), additionalData: buffer(encoder.encode(aad)) },
-		key,
-		buffer(ciphertext),
-	);
-	return JSON.parse(decoder.decode(plaintext));
 }
 
 function attempt(value: unknown): StoredAttempt | undefined {
@@ -629,7 +588,9 @@ export class OAuthAttempts {
 	async issue(returnPath?: string): Promise<OAuthAttempt> {
 		let state = base64(random(SECRET_BYTES));
 		let verifier = base64(random(SECRET_BYTES));
-		let digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(verifier)));
+		let digest = new Uint8Array(
+			await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
+		);
 		let expiresAt = new Date(this.#clock().getTime() + ATTEMPT_TTL_MS);
 		let stored: StoredAttempt = {
 			v: 1,

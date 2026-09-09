@@ -27,10 +27,12 @@ import * as Service from "../plan/service";
 import { instruction } from "@chopin/protocol/address";
 
 import { annotatedText, compose, referenceCatalog, remember } from "./address";
+import * as Mcps from "./mcps";
+import * as Cadence from "../cadence/service";
 import { broadcast, fail, reply, tell } from "../wire";
 
 import type { Server } from "bun";
-import type { SessionEvent } from "../agent/types";
+import type { SessionEvent, Tool } from "../agent/types";
 import type { Chat as Wire, Request } from "@chopin/protocol";
 import type { Config } from "../config";
 import type { HostedAuth } from "../auth/routes";
@@ -855,7 +857,57 @@ export function planTools(context: Room) {
 				question: active.text,
 			});
 		},
+		proposeCadence: items => Cadence.propose(context, items),
 	});
+}
+
+const CADENCE_DIRECTIVE =
+	"Review this room's document, its decisions, and the recent discussion, then propose the "
+	+ "Cadence work-items, sub-issues and projects that should be created or updated to reflect "
+	+ "them. First RESOLVE against the Cadence MCP so your proposals carry real ids, not guesses: "
+	+ "run whoami, then team (operation: list) to map each item's team to a real team_id, then "
+	+ "list_states / list_labels / team_member(find) for any state, label or assignee you "
+	+ "reference, and work_item (operation: search) to dedupe and decide create-vs-update. Then "
+	+ "call `propose_cadence_updates` once with the complete set, grouped by team, each item's "
+	+ "`fields` holding the full argument payload (operation, workspace_slug, resolved team_id and "
+	+ "ids). Score confidence by how fully you resolved the required arguments and list anything "
+	+ "you could not resolve in `needs`. Do not ask questions or write prose in reply — just "
+	+ "resolve, then call the tool with your best proposal set.";
+
+/**
+ * Fire a Planner turn that regenerates the room's Cadence proposals.
+ *
+ * Runs as a turn owned by the triggering member's session (so the agent has the
+ * member's MCP tools and the room's plan), driven by a fixed directive rather
+ * than a member message. The agent's `propose_cadence_updates` call persists
+ * and broadcasts the new list.
+ */
+export function generateCadence(context: Room, ws: Socket): void {
+	let { chat } = context;
+	if (chat.closed) return;
+	if (chat.busy) {
+		if (chat.waiting.length >= MAX_QUEUE) return;
+		chat.waiting.push({
+			id: ulid(),
+			handle: ws.data.handle,
+			text: CADENCE_DIRECTIVE,
+			sessionId: context.claimantSessionId,
+			userId: ws.data.principalId,
+		});
+		return queued(chat, context.server, context.room);
+	}
+	chat.busy = true;
+	chat.turn = { id: ulid(), handle: ws.data.handle, started: now(), responded: false };
+	state(chat, context.server, context.room);
+	startRun(
+		context,
+		ws.data.handle,
+		CADENCE_DIRECTIVE,
+		undefined,
+		context.claimantSessionId,
+		true,
+		{ entryId: ulid(), userId: ws.data.principalId },
+	);
 }
 
 export function retainReferences(chat: Chat, references: Wire.Reference[]): void {
@@ -952,6 +1004,7 @@ async function repositorySession(
 	claimantSessionId: string,
 	currentEntryId?: string,
 	currentReferences: Wire.Reference[] = [],
+	principalId?: string,
 ): Promise<Agent.Agent> {
 	let { ownership, owner, repository } = await resolveOwner(
 		context.auth,
@@ -1031,9 +1084,25 @@ async function repositorySession(
 		if (!bound()) return undefined;
 		return auth.sessions.token(ownerSessionId, owner.access.revision);
 	};
+	let mcpTools: Tool[] = [];
+	let mcpSkipped: string[] = [];
+	if (principalId) {
+		let opened = await Mcps.toolsFor(context, principalId);
+		mcpTools = opened.tools;
+		mcpSkipped = opened.skipped;
+	}
+	if (mcpSkipped.length > 0) {
+		notice(
+			context,
+			`Skipped ${mcpSkipped.length === 1 ? "MCP" : "MCPs"} ${
+				mcpSkipped.map(name => `\`${name}\``).join(", ")
+			} for this turn — no credential stored for it.`,
+		);
+	}
 	let tools = [
 		...planTools(context),
 		...repositoryTools({ token: activeToken, repository }),
+		...mcpTools,
 	];
 	let opening: Promise<Agent.Agent> | undefined;
 	let opened: Agent.Agent | undefined;
@@ -1175,8 +1244,15 @@ async function session(
 	claimantSessionId: string,
 	currentEntryId?: string,
 	currentReferences: Wire.Reference[] = [],
+	principalId?: string,
 ): Promise<Agent.Agent> {
-	return repositorySession(context, claimantSessionId, currentEntryId, currentReferences);
+	return repositorySession(
+		context,
+		claimantSessionId,
+		currentEntryId,
+		currentReferences,
+		principalId,
+	);
 }
 
 /**
@@ -1229,7 +1305,13 @@ async function run(
 		: undefined;
 
 	try {
-		let agent = await session(context, claimantSessionId, member?.entryId, references);
+		let agent = await session(
+			context,
+			claimantSessionId,
+			member?.entryId,
+			references,
+			member?.userId,
+		);
 		if (chat.agent !== agent) {
 			throw new Error("The Planner session changed before the turn started. Try again.");
 		}

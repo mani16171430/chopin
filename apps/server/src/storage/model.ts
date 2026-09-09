@@ -704,3 +704,99 @@ export type Lease = {
 	fencing: number;
 	expiresAt: Date;
 };
+
+/** One MCP server registered on a channel, with credentials kept out. */
+export type ChannelMcp = {
+	id: string;
+	channelId: string;
+	name: string;
+	url: string;
+	addedBy: string;
+	createdAt: Date;
+	updatedAt: Date;
+};
+
+export type CreateChannelMcp = {
+	channelId: string;
+	name: string;
+	url: string;
+	addedBy: string;
+	now: Date;
+};
+
+/**
+ * A member's own credential for one of the channel's MCP servers.
+ *
+ * `sealed` is the AES-GCM envelope from auth/seal.ts, bound to the channel and
+ * principal so it cannot be replayed under another. It is stored and returned
+ * opaquely; only the room that opened the channel for that principal decrypts
+ * it, at session build time.
+ */
+export type ChannelMcpCredential = {
+	channelId: string;
+	name: string;
+	principalId: string;
+	sealed: Uint8Array;
+	createdAt: Date;
+	updatedAt: Date;
+};
+
+export type UpsertChannelMcpCredential = {
+	channelId: string;
+	name: string;
+	principalId: string;
+	sealed: Uint8Array;
+	now: Date;
+};
+
+/**
+ * A proposed Cadence work-item / sub-issue / project for a channel.
+ *
+ * The agent derives these from the room's document, decisions and chat, groups
+ * them by the `team` they go under, and scores each with a `confidence`. An
+ * item below the review threshold is completed by a member before it can be
+ * pushed. `fields` are the arguments handed to `mcpTool` on the chat's
+ * `mcpServer` when the item is pushed. Non-secret — stored in the clear.
+ */
+export type CadenceUpdate = {
+	id: string;
+	channelId: string;
+	/** Grouping key — the team this item goes under; "" means unassigned. */
+	team: string;
+	op: "create" | "update";
+	/** The Cadence entity this updates, when op is "update". */
+	targetId?: string;
+	kind: string;
+	title: string;
+	fields: Record<string, unknown>;
+	confidence: number;
+	/** Arguments the agent could not resolve — what the edit form asks for. */
+	needs: string[];
+	status: "needs_input" | "ready" | "pushing" | "pushed" | "failed";
+	/** The chat MCP server and tool a push calls. */
+	mcpServer: string;
+	mcpTool: string;
+	/** Set once pushed to Cadence. */
+	pushedUrl?: string;
+	/** Set when a push failed. */
+	error?: string;
+	/** Handle of whoever last edited the fields. */
+	updatedBy?: string;
+	createdAt: Date;
+	updatedAt: Date;
+};
+
+/** One proposed item as the agent supplies it, before storage stamps ids/times. */
+export type ProposedCadenceUpdate = {
+	team: string;
+	op: "create" | "update";
+	targetId?: string;
+	kind: string;
+	title: string;
+	fields: Record<string, unknown>;
+	confidence: number;
+	needs: string[];
+	status: "needs_input" | "ready";
+	mcpServer: string;
+	mcpTool: string;
+};

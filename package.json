@@ -43,6 +43,9 @@
 			"anthropic": {
 				"@anthropic-ai/sdk": "0.120.0"
 			},
+			"mcp": {
+				"@modelcontextprotocol/sdk": "1.30.0"
+			},
 			"diffs": {
 				"@pierre/diffs": "1.3.0"
 			},

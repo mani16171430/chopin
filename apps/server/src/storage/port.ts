@@ -11,10 +11,13 @@ import type {
 	BackgroundJobCursor,
 	BackgroundJobDetail,
 	BackgroundJobPage,
+	CadenceUpdate,
 	CancelBackgroundJob,
 	ChannelAgent,
 	ChannelArchiveInput,
 	ChannelArchiveResult,
+	ChannelMcp,
+	ChannelMcpCredential,
 	ChannelPage,
 	ChannelRecord,
 	ChannelScanCursor,
@@ -26,6 +29,7 @@ import type {
 	ConfirmResearchWorkspace,
 	ConfirmResearchWorkspaceResult,
 	CreateChannel,
+	CreateChannelMcp,
 	CreateResearchWorkspace,
 	CreateResearchWorkspaceResult,
 	CreateWebSession,
@@ -35,6 +39,7 @@ import type {
 	LinkResearchTurnJob,
 	LinkResearchTurnJobResult,
 	PauseBackgroundJob,
+	ProposedCadenceUpdate,
 	PublishChannelDescription,
 	PublishChannelDescriptionResult,
 	PublishInitialResearchReport,
@@ -60,6 +65,7 @@ import type {
 	StoredChannel,
 	SupersedeBackgroundJob,
 	UpdateAgentContext,
+	UpsertChannelMcpCredential,
 	UserNavigation,
 	UserNavigationSnapshot,
 	UserProject,
@@ -199,6 +205,64 @@ export interface ResearchWorkspaceStore {
 	findTurnByJob(channelId: string, jobId: string): Promise<ResearchTurn | undefined>;
 }
 
+/**
+ * Channel-scoped MCP servers and each member's own credential for them.
+ *
+ * Definitions are shared by the channel; credentials are per (channel, name,
+ * principal) and stored sealed — the store never returns decrypted credentials.
+ */
+export interface ChannelMcpStore {
+	add(input: CreateChannelMcp): Promise<ChannelMcp>;
+	remove(channelId: string, name: string): Promise<boolean>;
+	list(channelId: string): Promise<ChannelMcp[]>;
+	get(channelId: string, name: string): Promise<ChannelMcp | undefined>;
+	setCredential(input: UpsertChannelMcpCredential): Promise<ChannelMcpCredential>;
+	clearCredential(channelId: string, name: string, principalId: string): Promise<boolean>;
+	credential(
+		channelId: string,
+		name: string,
+		principalId: string,
+	): Promise<ChannelMcpCredential | undefined>;
+	credentials(channelId: string, principalId: string): Promise<ChannelMcpCredential[]>;
+}
+
+/**
+ * Channel-scoped Cadence work-item proposals.
+ *
+ * The agent regenerates the whole list at once (`replaceAll`); members then
+ * edit fields, set status, or record a push result on individual items. Items
+ * are non-secret and returned in the clear, ordered by team then title.
+ */
+export interface CadenceUpdateStore {
+	list(channelId: string): Promise<CadenceUpdate[]>;
+	get(channelId: string, id: string): Promise<CadenceUpdate | undefined>;
+	replaceAll(
+		channelId: string,
+		items: ProposedCadenceUpdate[],
+		now: Date,
+	): Promise<CadenceUpdate[]>;
+	updateFields(
+		channelId: string,
+		id: string,
+		patch: {
+			team?: string;
+			title?: string;
+			fields?: Record<string, unknown>;
+			status?: CadenceUpdate["status"];
+			updatedBy?: string;
+		},
+		now: Date,
+	): Promise<CadenceUpdate | undefined>;
+	setStatus(
+		channelId: string,
+		id: string,
+		status: CadenceUpdate["status"],
+		result: { pushedUrl?: string; error?: string; targetId?: string },
+		now: Date,
+	): Promise<CadenceUpdate | undefined>;
+	remove(channelId: string, id: string): Promise<boolean>;
+}
+
 /** The complete durable boundary. No provider-specific primitive crosses it. */
 export interface StorageAdapter {
 	readonly driver: string;
@@ -210,6 +274,8 @@ export interface StorageAdapter {
 	readonly leases: LeaseStore;
 	readonly jobs: BackgroundJobStore;
 	readonly research: ResearchWorkspaceStore;
+	readonly channelMcps: ChannelMcpStore;
+	readonly cadence: CadenceUpdateStore;
 
 	migrate(): Promise<void>;
 	health(): Promise<void>;

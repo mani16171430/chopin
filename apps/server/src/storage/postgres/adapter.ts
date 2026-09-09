@@ -7,6 +7,8 @@ import { migrate, verifyMigrations } from "./migrations";
 import { PostgresNavigationStore } from "./navigation";
 import { PostgresBackgroundJobStore } from "./jobs";
 import { PostgresResearchWorkspaceStore } from "./research";
+import { PostgresChannelMcpStore } from "./channel-mcps";
+import { PostgresCadenceUpdateStore } from "./cadence";
 
 import type { TransactionSQL } from "bun";
 import type {
@@ -40,6 +42,8 @@ import type {
 } from "../model";
 import type {
 	BackgroundJobStore,
+	CadenceUpdateStore,
+	ChannelMcpStore,
 	ChannelStore,
 	CollaborationStore,
 	LeaseStore,
@@ -469,6 +473,14 @@ export class PostgresStorage implements StorageAdapter {
 			},
 			(transaction, input) => this.#createAvailableChannelInTransaction(transaction, input),
 		);
+		this.channelMcps = new PostgresChannelMcpStore(
+			this.#sql,
+			(action, execute) => this.#run(action, execute),
+		);
+		this.cadence = new PostgresCadenceUpdateStore(
+			this.#sql,
+			(action, execute) => this.#run(action, execute),
+		);
 	}
 
 	readonly users: UserStore = {
@@ -571,6 +583,8 @@ export class PostgresStorage implements StorageAdapter {
 	readonly navigation: NavigationStore;
 	readonly jobs: BackgroundJobStore;
 	readonly research: ResearchWorkspaceStore;
+	readonly channelMcps: ChannelMcpStore;
+	readonly cadence: CadenceUpdateStore;
 
 	readonly channels: ChannelStore = {
 		create: input => this.#createChannel(input),

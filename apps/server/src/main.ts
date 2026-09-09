@@ -14,6 +14,8 @@ import * as Agent from "./agent/client";
 import { ActiveOwnerBindings } from "./agent/active-owner";
 import { registerAuthRoutes } from "./auth/routes";
 import * as Chat from "./chat/service";
+import * as Mcps from "./chat/mcps";
+import * as Cadence from "./cadence/service";
 import { CHAT_CAPABILITIES, incomingFrame } from "./chat/incoming";
 import { ReferenceService } from "./chat/references";
 import { registerChannelRoutes } from "./channels/routes";
@@ -308,6 +310,38 @@ async function receive(ws: Socket, raw: string): Promise<void> {
 
 		case "chat:session-end":
 			if (room.plan) Chat.sessionEnd(chat(room, ws), ws, frame);
+			return;
+
+		case "chat:mcp:add":
+			if (room.plan) await Mcps.add(chat(room, ws), ws, frame);
+			return;
+
+		case "chat:mcp:remove":
+			if (room.plan) await Mcps.remove(chat(room, ws), ws, frame);
+			return;
+
+		case "chat:mcp:credential":
+			if (room.plan) await Mcps.credential(chat(room, ws), ws, frame);
+			return;
+
+		case "chat:mcp:list":
+			if (room.plan) await Mcps.mcps(chat(room, ws), ws, frame);
+			return;
+
+		case "cadence:generate":
+			if (room.plan) Chat.generateCadence(chat(room, ws), ws);
+			return;
+
+		case "cadence:field":
+			if (room.plan) await Cadence.field(chat(room, ws), ws, frame);
+			return;
+
+		case "cadence:push":
+			if (room.plan) await Cadence.push(chat(room, ws), ws, frame);
+			return;
+
+		case "cadence:list":
+			if (room.plan) await Cadence.list(chat(room, ws), ws, frame);
 			return;
 
 		case "question:open":
