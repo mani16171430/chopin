@@ -219,19 +219,28 @@ function ItemCard({ item, wire }: { item: Wire.Update; wire: Socket | undefined 
 						)}
 						<input
 							className="w-full rounded border border-edge bg-transparent px-2 py-1 text-[12px]"
-							onChange={event => { setDirty(true); setTitle(event.currentTarget.value); }}
+							onChange={event => {
+								setDirty(true);
+								setTitle(event.currentTarget.value);
+							}}
 							placeholder="title"
 							value={title}
 						/>
 						<input
 							className="w-full rounded border border-edge bg-transparent px-2 py-1 text-[12px]"
-							onChange={event => { setDirty(true); setTeam(event.currentTarget.value); }}
+							onChange={event => {
+								setDirty(true);
+								setTeam(event.currentTarget.value);
+							}}
 							placeholder="team"
 							value={team}
 						/>
 						<textarea
 							className="h-28 w-full rounded border border-edge bg-transparent px-2 py-1 font-mono text-[11px]"
-							onChange={event => { setDirty(true); setFields(event.currentTarget.value); }}
+							onChange={event => {
+								setDirty(true);
+								setFields(event.currentTarget.value);
+							}}
 							spellCheck={false}
 							value={fields}
 						/>
