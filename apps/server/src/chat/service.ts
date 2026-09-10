@@ -22,6 +22,7 @@ import { ulid } from "@chopin/dialect";
 
 import * as Agent from "../agent/client";
 import { repositoryTools } from "../agent/repository";
+import * as Clash from "../agent/ask-clash";
 import { type ResearchWorkspaceRequest, toolbox } from "../agent/tools";
 import * as Service from "../plan/service";
 import { instruction } from "@chopin/protocol/address";
@@ -858,6 +859,9 @@ export function planTools(context: Room) {
 			});
 		},
 		proposeCadence: items => Cadence.propose(context, items),
+		...(context.config.clash
+			? { askClash: (question: string) => Clash.askClash(context.config.clash!, question) }
+			: {}),
 	});
 }
 

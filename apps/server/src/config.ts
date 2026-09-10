@@ -43,6 +43,15 @@ export type Config = {
 	auth: AuthConfig;
 	/** The Anthropic-Messages-API-compatible gateway the planner calls. */
 	litellm: LiteLLMConfig;
+	/**
+	 * Clash — this deployment's agent on the Razorpay Agent Platform, called
+	 * through the planner's `ask_clash` tool.
+	 *
+	 * Optional by design: a deployment without a platform key is still a
+	 * complete chopin, just without the tool. Unlike LiteLLM this must not
+	 * fail startup when absent — the tool reports itself unconfigured instead.
+	 */
+	clash?: ClashConfig;
 };
 
 export type LiteLLMConfig = {
@@ -50,15 +59,46 @@ export type LiteLLMConfig = {
 	apiKey: string;
 };
 
+export type ClashConfig = {
+	baseUrl: string;
+	/** Service-account API key (`ak_live_…`). Never logged or returned. */
+	apiKey: string;
+	/** The platform agent runs are addressed to, by name. */
+	agentName: string;
+};
+
 const DEFAULT_PORT = 8787;
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_LITELLM_BASE_URL = "https://llm-gateway.razorpay.com";
+const DEFAULT_CLASH_AGENT_NAME = "clash";
 
 function litellm(agent: boolean): LiteLLMConfig {
 	let baseUrl = process.env.LITELLM_BASE_URL || DEFAULT_LITELLM_BASE_URL;
 	let apiKey = process.env.LITELLM_API_KEY || "";
 	if (agent && !apiKey) throw new Error("LITELLM_API_KEY is required when AGENT is on.");
 	return { baseUrl, apiKey };
+}
+
+/**
+ * The Clash integration is opt-in: no key, no `ask_clash` tool.
+ *
+ * A key without a base URL is a misconfiguration worth a sentence, so that
+ * combination does fail startup; the inverse (URL set, key empty) is treated
+ * as unset, since the key is the part that costs something to leak into a
+ * half-configured deployment.
+ */
+function clash(): ClashConfig | undefined {
+	let apiKey = process.env.AGENT_PLATFORM_KEY || "";
+	if (!apiKey) return undefined;
+	let baseUrl = process.env.AGENT_PLATFORM_BASE_URL || "";
+	if (!baseUrl) {
+		throw new Error("AGENT_PLATFORM_BASE_URL is required when AGENT_PLATFORM_KEY is set.");
+	}
+	return {
+		baseUrl: baseUrl.replace(/\/+$/, ""),
+		apiKey,
+		agentName: process.env.CLASH_AGENT_NAME || DEFAULT_CLASH_AGENT_NAME,
+	};
 }
 
 function port(): number {
@@ -102,6 +142,7 @@ export function load(): Config {
 		storage: storage(),
 		auth: loadAuth(),
 		litellm: litellm(agent),
+		clash: clash(),
 	};
 }
 
@@ -125,6 +166,7 @@ export function describe(config: Config): string {
 		config.agent ? `agent: ${config.model} (on demand)` : "agent: off",
 		config.backgroundJobs ? "background jobs: on" : "background jobs: off",
 		config.webResearch ? "web research: on" : "web research: off",
+		config.clash ? `clash: ${config.clash.agentName}` : "clash: off",
 		admission,
 		`storage: ${config.storage.driver}`,
 	];
