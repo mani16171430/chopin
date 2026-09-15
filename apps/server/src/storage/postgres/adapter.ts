@@ -17,6 +17,7 @@ import type {
 	ChannelArchiveInput,
 	ChannelArchiveResult,
 	ChannelCursor,
+	ChannelInvite,
 	ChannelPage,
 	ChannelRecord,
 	ChannelScanCursor,
@@ -43,6 +44,7 @@ import type {
 import type {
 	BackgroundJobStore,
 	CadenceUpdateStore,
+	ChannelInviteStore,
 	ChannelMcpStore,
 	ChannelStore,
 	CollaborationStore,
@@ -74,9 +76,9 @@ type SessionRow = {
 
 type ChannelRow = {
 	id: string;
-	repositoryId: string;
-	repositoryOwner: string;
-	repositoryName: string;
+	repositoryId: string | null;
+	repositoryOwner: string | null;
+	repositoryName: string | null;
 	parentChannelId: string | null;
 	title: string;
 	slug?: string;
@@ -94,6 +96,30 @@ type ChannelRow = {
 	descriptionJobId: string | null;
 	descriptionUpdatedAt: Timestamp | null;
 };
+
+type ChannelInviteRow = {
+	id: string;
+	channelId: string;
+	tokenHash: string;
+	tokenEnvelope: Uint8Array | null;
+	createdBy: string;
+	createdAt: Timestamp;
+	revokedAt: Timestamp | null;
+};
+
+function invite(row: ChannelInviteRow): ChannelInvite {
+	return {
+		id: row.id,
+		channelId: row.channelId,
+		tokenHash: row.tokenHash,
+		...(row.tokenEnvelope === null
+			? {}
+			: { tokenEnvelope: bytes(row.tokenEnvelope, "invite token envelope") }),
+		createdBy: row.createdBy,
+		createdAt: date(row.createdAt, "invite creation time"),
+		...(row.revokedAt === null ? {} : { revokedAt: date(row.revokedAt, "invite revocation time") }),
+	};
+}
 
 type SnapshotRow = {
 	channelId: string;
@@ -597,13 +623,15 @@ export class PostgresStorage implements StorageAdapter {
 			}),
 		resolve: (repositoryId, slug) =>
 			this.#run("resolve channel slug", async () => {
+				// IS NOT DISTINCT FROM: a null repository_id is the general-documents
+				// scope, and NULL = anything is never true under plain equality.
 				let [found] = await this.#sql<ChannelRow[]>`
 					SELECT ${this.#sql.unsafe(CHANNEL_COLUMNS)}
 					FROM channel_slugs
 					JOIN channels
 						ON channels.id = channel_slugs.channel_id
-						AND channels.repository_id = channel_slugs.repository_id
-					WHERE channel_slugs.repository_id = ${repositoryId}
+						AND channels.repository_id IS NOT DISTINCT FROM channel_slugs.repository_id
+					WHERE channel_slugs.repository_id IS NOT DISTINCT FROM ${repositoryId}
 						AND channel_slugs.slug = ${slug}
 				`;
 				return found ? channel(found) : undefined;
@@ -630,6 +658,104 @@ export class PostgresStorage implements StorageAdapter {
 		commit: input => this.#commit(input),
 		replace: input => this.#replace(input),
 		checkpoint: input => this.#checkpoint(input),
+	};
+
+	readonly invites: ChannelInviteStore = {
+		mint: input =>
+			this.#run("mint channel invite", () =>
+				this.#sql.begin(async transaction => {
+					// One live invite per channel: rotating revokes the old row first —
+					// and drops everyone who joined on it, so cutting off a link cuts
+					// off the people it let in. They re-join with the new link.
+					let revoked = await transaction<{ id: string }[]>`
+						UPDATE channel_invites SET revoked_at = ${input.now}
+						WHERE channel_id = ${input.channelId} AND revoked_at IS NULL
+						RETURNING id
+					`;
+					if (revoked.length > 0) {
+						let ids = revoked.map(row => row.id);
+						await transaction`
+							DELETE FROM channel_members
+							WHERE invite_id = ANY(${transaction.array(ids, "text")})
+						`;
+					}
+					let id = crypto.randomUUID();
+					let [saved] = await transaction<ChannelInviteRow[]>`
+						INSERT INTO channel_invites (id, channel_id, token_hash, token_envelope, created_by, created_at)
+						VALUES (${id}, ${input.channelId}, ${input.tokenHash}, ${
+						input.tokenEnvelope ?? null
+					}, ${input.createdBy}, ${input.now})
+						RETURNING id, channel_id AS "channelId", token_hash AS "tokenHash", token_envelope AS "tokenEnvelope",
+							created_by AS "createdBy", created_at AS "createdAt", revoked_at AS "revokedAt"
+					`;
+					if (!saved) throw corrupt("minting an invite returned no record");
+					return invite(saved);
+				})),
+		live: channelId =>
+			this.#run("read live channel invite", async () => {
+				let [found] = await this.#sql<ChannelInviteRow[]>`
+					SELECT id, channel_id AS "channelId", token_hash AS "tokenHash", token_envelope AS "tokenEnvelope",
+						created_by AS "createdBy", created_at AS "createdAt", revoked_at AS "revokedAt"
+					FROM channel_invites
+					WHERE channel_id = ${channelId} AND revoked_at IS NULL
+				`;
+				return found ? invite(found) : undefined;
+			}),
+		resolve: tokenHash =>
+			this.#run("resolve channel invite", async () => {
+				let [found] = await this.#sql<ChannelInviteRow[]>`
+					SELECT id, channel_id AS "channelId", token_hash AS "tokenHash", token_envelope AS "tokenEnvelope",
+						created_by AS "createdBy", created_at AS "createdAt", revoked_at AS "revokedAt"
+					FROM channel_invites
+					WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+				`;
+				return found ? invite(found) : undefined;
+			}),
+		reseal: (channelId, tokenHash, tokenEnvelope) =>
+			this.#run("reseal channel invite", async () => {
+				let [saved] = await this.#sql<ChannelInviteRow[]>`
+					UPDATE channel_invites SET token_hash = ${tokenHash}, token_envelope = ${tokenEnvelope}
+					WHERE channel_id = ${channelId} AND revoked_at IS NULL
+					RETURNING id, channel_id AS "channelId", token_hash AS "tokenHash", token_envelope AS "tokenEnvelope",
+						created_by AS "createdBy", created_at AS "createdAt", revoked_at AS "revokedAt"
+				`;
+				return saved ? invite(saved) : undefined;
+			}),
+		revoke: (id, now) =>
+			this.#run("revoke channel invite", () =>
+				this.#sql.begin(async transaction => {
+					let result = await transaction`
+						UPDATE channel_invites SET revoked_at = ${now}
+						WHERE id = ${id} AND revoked_at IS NULL
+					`;
+					if (result.count === 0) return false;
+					// A revoked invite can no longer vouch for anyone it let in.
+					await transaction`DELETE FROM channel_members WHERE invite_id = ${id}`;
+					return true;
+				})),
+		join: member =>
+			this.#run("join channel by invite", async () => {
+				await this.#sql`
+					INSERT INTO channel_members (channel_id, user_id, invite_id, joined_at)
+					VALUES (${member.channelId}, ${member.userId}, ${member.inviteId}, ${member.now})
+					ON CONFLICT (channel_id, user_id) DO NOTHING
+				`;
+			}),
+		isMember: (channelId, userId) =>
+			this.#run("read channel membership", async () => {
+				let [found] = await this.#sql<{ userId: string }[]>`
+					SELECT user_id AS "userId" FROM channel_members
+					WHERE channel_id = ${channelId} AND user_id = ${userId}
+				`;
+				return found !== undefined;
+			}),
+		channelsJoinedBy: userId =>
+			this.#run("list channels a member joined", async () => {
+				let rows = await this.#sql<{ channelId: string }[]>`
+					SELECT channel_id AS "channelId" FROM channel_members WHERE user_id = ${userId}
+				`;
+				return rows.map(row => row.channelId);
+			}),
 	};
 
 	readonly leases: LeaseStore = {
@@ -758,9 +884,13 @@ export class PostgresStorage implements StorageAdapter {
 		});
 	}
 
-	async #lockChannelTitles(transaction: TransactionSQL, repositoryId: string): Promise<void> {
+	async #lockChannelTitles(
+		transaction: TransactionSQL,
+		repositoryId: string | null,
+	): Promise<void> {
+		// The general-documents scope shares one lock key; a repository keeps its own.
 		await transaction`
-			SELECT pg_advisory_xact_lock(2043237434, hashtext(${repositoryId}))
+			SELECT pg_advisory_xact_lock(2043237434, hashtext(${repositoryId ?? ""}))
 		`;
 	}
 
@@ -908,26 +1038,28 @@ export class PostgresStorage implements StorageAdapter {
 
 	async #reserveSlug(
 		transaction: TransactionSQL,
-		repositoryId: string,
+		repositoryId: string | null,
 		channelId: string,
 		title: string,
 		now: Date,
 	): Promise<string> {
 		let base = documentSlug(title);
+		// A null repository is the general-documents scope; the unique index on
+		// COALESCE(repository_id, '') makes that scope share one slug namespace.
 		for (let index = 1;; index++) {
 			let candidate = documentSlugCandidate(base, index);
 			let [inserted] = await transaction<{ channelId: string }[]>`
 				INSERT INTO channel_slugs (
-					repository_id, slug, channel_id, canonical, created_at
-				) VALUES (${repositoryId}, ${candidate}, ${channelId}, false, ${now})
-				ON CONFLICT DO NOTHING
+					id, repository_id, slug, channel_id, canonical, created_at
+				) VALUES (${`${channelId}:${candidate}`}, ${repositoryId}, ${candidate}, ${channelId}, false, ${now})
+				ON CONFLICT (COALESCE(repository_id, ''), slug) DO NOTHING
 				RETURNING channel_id AS "channelId"
 			`;
 			if (!inserted) {
 				let [existing] = await transaction<{ channelId: string }[]>`
 					SELECT channel_id AS "channelId"
 					FROM channel_slugs
-					WHERE repository_id = ${repositoryId} AND slug = ${candidate}
+					WHERE COALESCE(repository_id, '') = COALESCE(${repositoryId}, '') AND slug = ${candidate}
 				`;
 				if (existing?.channelId !== channelId) continue;
 			}
@@ -938,7 +1070,7 @@ export class PostgresStorage implements StorageAdapter {
 			`;
 			let [promoted] = await transaction<{ slug: string }[]>`
 				UPDATE channel_slugs SET canonical = true
-				WHERE repository_id = ${repositoryId}
+				WHERE COALESCE(repository_id, '') = COALESCE(${repositoryId}, '')
 					AND slug = ${candidate}
 					AND channel_id = ${channelId}
 				RETURNING slug

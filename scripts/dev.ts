@@ -35,6 +35,16 @@ if (`bun@${Bun.version}` !== manifest.packageManager) {
 /** How long a child gets to leave politely before it is made to. */
 const GRACE_MS = 2_000;
 
+/*
+ * `--watch` reloads the server on every file edit — and a reload takes a new
+ * process, which drops every process-local session, signing everyone out
+ * mid-test. `--no-watch` keeps one process alive across edits; restart by hand.
+ * The writer lease also cannot survive two live processes, so a watch reload
+ * into a still-running old one is the "another Chopin instance owns the
+ * database" crash.
+ */
+const WATCH = process.argv.includes("--no-watch") ? [] : ["--watch"];
+
 const WEB_PORT = process.env.CHOPIN_DEV_WEB_PORT || "5173";
 const WEB = `http://127.0.0.1:${WEB_PORT}`;
 
@@ -150,7 +160,7 @@ children = [
 		APP_ORIGIN: exe?.origin ?? process.env.APP_ORIGIN ?? "",
 		CHOPIN_DEV_EXE_HOST: exe?.host ?? "",
 	}),
-	start("server", "apps/server", ["bun", "--watch", "src/main.ts"], {
+	start("server", "apps/server", ["bun", ...WATCH, "src/main.ts"], {
 		DEV_CLIENT: WEB,
 		...(exe
 			? {

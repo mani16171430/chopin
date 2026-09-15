@@ -5,6 +5,11 @@ import { askClash, ClashError, getTurnEvents } from "./ask-clash";
 import type { Fetcher } from "./ask-clash";
 import type { ClashConfig } from "../config";
 
+// Tests write the call log to a scratch dir, never the real logs/.
+process.env.ASK_CLASH_LOG_DIR = await import("node:fs/promises").then(fs =>
+	fs.mkdtemp("/tmp/ask-clash-test-")
+);
+
 const CONFIG: ClashConfig = {
 	baseUrl: "https://platform.example",
 	apiKey: "ak_live_test_key",
@@ -45,6 +50,17 @@ function running(status = "active") {
 		body: { id: "run-1", current_turn: { id: "turn-1", status } },
 	};
 }
+
+/** Creates the run, then drops every poll on the transport. */
+const ALWAYS_DOWN: Fetcher = async url => {
+	if (url.endsWith("/v2/runs")) {
+		return {
+			status: 201,
+			body: { id: "run-1", current_turn: { id: "turn-1", status: "pending" } },
+		};
+	}
+	throw new Error("The socket connection was closed unexpectedly");
+};
 
 test("create → poll → completed returns result_text, with the bearer key on the wire", async () => {
 	let { calls, fetcher } = scripted([
@@ -87,6 +103,45 @@ test("a failed turn surfaces the platform's reason, never the key", async () => 
 
 	expect(result).toContain("sandbox exploded");
 	expect(result).not.toContain("ak_live");
+});
+
+test("a dropped poll socket is retried until the run completes", async () => {
+	let polls = 0;
+	let fetcher: Fetcher = async url => {
+		if (url.endsWith("/v2/runs")) {
+			return {
+				status: 201,
+				body: { id: "run-1", current_turn: { id: "turn-1", status: "pending" } },
+			};
+		}
+		polls++;
+		// The first two polls die on the transport, as a reset connection does.
+		if (polls <= 2) throw new Error("The socket connection was closed unexpectedly");
+		return {
+			status: 200,
+			body: {
+				id: "run-1",
+				current_turn: { id: "turn-1", status: "completed", result_text: "the answer" },
+			},
+		};
+	};
+
+	let result = await askClash(CONFIG, "q", fetcher, FAST);
+
+	expect(result).toBe("the answer");
+	expect(polls).toBe(3);
+});
+
+test("a poll that keeps failing past the deadline surfaces the transport error", async () => {
+	let caught: unknown;
+	try {
+		await askClash(CONFIG, "q", ALWAYS_DOWN, { intervalMs: 1, timeoutMs: 5 });
+	} catch (err) {
+		caught = err;
+	}
+	expect(caught).toBeInstanceOf(ClashError);
+	expect((caught as ClashError).message).toContain("socket connection was closed");
+	expect((caught as ClashError).message).not.toContain("ak_live");
 });
 
 test("waiting_for_input cancels and explains", async () => {

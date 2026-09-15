@@ -1,4 +1,8 @@
-import { childDocumentPath, documentPath } from "@chopin/protocol/document-url";
+import {
+	childDocumentPath,
+	documentPath,
+	generalDocumentPath,
+} from "@chopin/protocol/document-url";
 
 import type { NavigationProject, ResearchParentChannel } from "./api";
 import type { ResearchOpener } from "@chopin/editor";
@@ -18,7 +22,8 @@ export const NAVIGATION_MEDIA = "(max-width: 1023px)";
 export function isDocumentWorkspaceRoute(
 	route: NavigationRoute,
 ): route is DocumentRouteIdentitySource {
-	return route.page === "channel" || route.page === "document" || route.page === "child";
+	return route.page === "channel" || route.page === "document" || route.page === "child"
+		|| route.page === "general";
 }
 
 export function navigationMode(
@@ -55,6 +60,14 @@ export function documentDestination(
 	for (let { documents, project } of projects) {
 		let channel = documents.channels.find(candidate => candidate.id === documentId);
 		if (channel) {
+			// A general document's channel sits outside any project catalogue; one
+			// surfaced here whose repository matches the project is an ordinary doc.
+			if (
+				channel.repositoryOwner === null
+				&& channel.repositoryName === null
+			) {
+				return generalDocumentPath(channel.slug);
+			}
 			if (channel.parentChannelId) {
 				let parent = documents.channels.find(candidate => candidate.id === channel.parentChannelId);
 				return parent
@@ -76,6 +89,8 @@ export function researchChildDestination(
 	parent: Pick<ResearchParentChannel, "repositoryOwner" | "repositoryName" | "slug">,
 	child: Pick<Research.ReadyChild, "slug">,
 ): string {
+	// Research children only exist under a repository channel.
+	if (!parent.repositoryOwner || !parent.repositoryName) return "/";
 	return childDocumentPath(
 		parent.repositoryOwner,
 		parent.repositoryName,

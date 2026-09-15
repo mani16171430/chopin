@@ -63,6 +63,12 @@ const MIGRATIONS = [{
 }, {
 	id: "016_cadence_updates",
 	path: join(import.meta.dir, "migrations/016_cadence_updates.sql"),
+}, {
+	id: "017_general_documents",
+	path: join(import.meta.dir, "migrations/017_general_documents.sql"),
+}, {
+	id: "018_invite_token_recovery",
+	path: join(import.meta.dir, "migrations/018_invite_token_recovery.sql"),
 }] satisfies Migration[];
 
 /** Navigation shipped as 002 before document slugs claimed that number on main. */

@@ -27,9 +27,10 @@ export type Repository = {
 
 export type Channel = {
 	id: string;
-	repositoryId: string;
-	repositoryOwner: string;
-	repositoryName: string;
+	/** Null marks a general document: it lives outside any repository. */
+	repositoryId: string | null;
+	repositoryOwner: string | null;
+	repositoryName: string | null;
 	parentChannelId?: string;
 	title: string;
 	slug: string;
@@ -81,12 +82,23 @@ export type ChannelPage = {
 	nextCursor?: string;
 };
 
+/** A repository channel detail carries the repository the channel belongs to. */
 export type ChannelDetail = {
 	repository: Repository;
 	canEdit: boolean;
 	canManage: boolean;
 	channel: Channel;
 };
+
+/** A general document has no repository; membership of it authorizes access. */
+export type GeneralChannelDetail = {
+	repository?: undefined;
+	canEdit: boolean;
+	canManage: boolean;
+	channel: Channel;
+};
+
+export type AnyChannelDetail = ChannelDetail | GeneralChannelDetail;
 
 export type ChannelListOptions = {
 	cursor?: string;
@@ -229,6 +241,41 @@ export function createChannel(
 
 export function channel(id: string, signal?: AbortSignal): Promise<ChannelDetail> {
 	return response(`/api/channels/${encodeURIComponent(id)}`, { signal });
+}
+
+export function generalChannel(id: string, signal?: AbortSignal): Promise<GeneralChannelDetail> {
+	return response(`/api/channels/${encodeURIComponent(id)}`, { signal });
+}
+
+export function generalDocument(slug: string, signal?: AbortSignal): Promise<ChannelDetail> {
+	return response(`/api/documents/general/${encodeURIComponent(slug)}`, { signal });
+}
+
+export function createGeneralDocument(): Promise<ChannelDetail & { inviteUrl: string }> {
+	return response("/api/documents/general", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: "{}",
+	});
+}
+
+export function rotateChannelInvite(channelId: string): Promise<{ inviteUrl: string }> {
+	return response(`/api/channels/${encodeURIComponent(channelId)}/invite/rotate`, {
+		method: "POST",
+	});
+}
+
+/** Reads the live invite link without rotating it. */
+export function channelInvite(
+	channelId: string,
+	signal?: AbortSignal,
+): Promise<{ inviteUrl: string }> {
+	return response(`/api/channels/${encodeURIComponent(channelId)}/invite`, { signal });
+}
+
+/** The general documents the signed-in user has joined, for the sidebar. */
+export function myGeneralDocuments(signal?: AbortSignal): Promise<{ channels: Channel[] }> {
+	return response("/api/my/general-documents", { signal });
 }
 
 export function document(

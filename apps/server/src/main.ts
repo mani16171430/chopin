@@ -43,6 +43,7 @@ import { ResearchWorkspaceService } from "./research/service";
 import * as Rooms from "./rooms";
 import { admit } from "./socket/admission";
 import { StorageError } from "./storage/errors";
+import { isRepositoryChannel } from "./storage/model";
 import { createStorage } from "./storage/registry";
 import { broadcast, fail, relay, reply, tell, topic } from "./wire";
 
@@ -173,12 +174,15 @@ function chat(room: Rooms.Room, ws: Socket): Chat.Room {
 		config,
 		auth: hostedAuth,
 		claimantSessionId: ws.data.sessionId,
-		repository: {
-			id: ws.data.repositoryId,
-			owner: ws.data.repositoryOwner,
-			name: ws.data.repositoryName,
-			defaultBranch: ws.data.repositoryDefaultBranch,
-		},
+		// A general document has no repository; chat degrades to no repository tools.
+		repository: ws.data.repositoryId
+			? {
+				id: ws.data.repositoryId,
+				owner: ws.data.repositoryOwner!,
+				name: ws.data.repositoryName!,
+				defaultBranch: ws.data.repositoryDefaultBranch!,
+			}
+			: undefined,
 		persist: () => Service.persist(room.plan!),
 		ownerAvailable: () => jobRunner?.ownerAvailable(room.id) ?? Promise.resolve(),
 		jobs: config.backgroundJobs ? jobService : undefined,
@@ -330,6 +334,10 @@ async function receive(ws: Socket, raw: string): Promise<void> {
 
 		case "cadence:generate":
 			if (room.plan) Chat.generateCadence(chat(room, ws), ws);
+			return;
+
+		case "doc:generate-ai":
+			if (room.plan) Chat.generateAiDoc(chat(room, ws), ws);
 			return;
 
 		case "cadence:field":
@@ -491,12 +499,12 @@ function applyChannelAccess(
 async function checkAccess(ws: Socket, forceGitHub: boolean): Promise<AuthorizationResult> {
 	if (ws.data.closed) return "denied";
 	let data = ws.data;
+	// A general document has no repository identity; membership is its credential.
+	let repositoryChannel = data.repositoryId && data.repositoryOwner && data.repositoryName;
 	if (
 		!data.credential
 		|| !data.principalId
-		|| !data.repositoryId
-		|| !data.repositoryOwner
-		|| !data.repositoryName
+		|| (!!data.repositoryId !== !!repositoryChannel)
 		|| (data.authorizedUntil ?? 0) <= Date.now()
 	) return "denied";
 	try {
@@ -507,6 +515,13 @@ async function checkAccess(ws: Socket, forceGitHub: boolean): Promise<Authorizat
 			? undefined
 			: await storage.channels.get(data.room);
 		if (!channel || channel.repositoryId !== data.repositoryId) return "denied";
+		if (!isRepositoryChannel(channel)) {
+			if (!await storage.invites.isMember(channel.id, data.principalId)) return "denied";
+			applyChannelAccess(ws, channel, data.canManage);
+			data.accessCheckedAt = Date.now();
+			data.authorizedUntil = session.session.expiresAt.getTime();
+			return "allowed";
+		}
 		if (!forceGitHub && Date.now() - (data.accessCheckedAt ?? 0) < ACCESS_RECHECK_MS) {
 			applyChannelAccess(ws, channel, data.canManage);
 			return "allowed";
@@ -516,8 +531,8 @@ async function checkAccess(ws: Socket, forceGitHub: boolean): Promise<Authorizat
 			token =>
 				hostedAuth.github.repositoryAccess(
 					token,
-					data.repositoryOwner!,
-					data.repositoryName!,
+					channel.repositoryOwner,
+					channel.repositoryName,
 				),
 		);
 		let repository = access.value;
@@ -556,14 +571,18 @@ async function validateOpenedSocket(ws: Socket): Promise<void> {
 	let channel = deletingChannels.has(ws.data.room)
 		? undefined
 		: await storage.channels.get(ws.data.room);
-	if (
-		!channel || channel.repositoryId !== ws.data.repositoryId || deletingChannels.has(channel.id)
-	) {
+	// A general document matches on held membership; both repository ids are null.
+	let deleted = !channel
+		|| channel.repositoryId !== ws.data.repositoryId
+		|| deletingChannels.has(channel.id)
+		|| (!isRepositoryChannel(channel)
+			&& !await storage.invites.isMember(channel.id, ws.data.principalId));
+	if (deleted) {
 		tell(ws, { kind: "session:deleted", ts: 0, channelId: ws.data.room });
 		ws.close(4404, "document deleted");
 		return;
 	}
-	if (ws.data.closed) return;
+	if (ws.data.closed || !channel) return;
 	applyChannelAccess(ws, channel, ws.data.canManage);
 }
 

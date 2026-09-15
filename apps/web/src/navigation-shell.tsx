@@ -13,7 +13,7 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { useTransitionPresence } from "@chopin/editor/transition-presence";
-import { documentPath } from "@chopin/protocol/document-url";
+import { documentPath, generalDocumentPath } from "@chopin/protocol/document-url";
 
 import * as Api from "./api";
 import { forgetChannel } from "./channel-recovery";
@@ -93,6 +93,9 @@ let DocumentSearchDialog = lazy(() =>
 );
 let RenameDocumentDialog = lazy(() =>
 	import("./rename-document-dialog").then(module => ({ default: module.RenameDocumentDialog }))
+);
+let GeneralInviteDialog = lazy(() =>
+	import("./general-invite-dialog").then(module => ({ default: module.GeneralInviteDialog }))
 );
 let DeleteDocumentDialog = lazy(() =>
 	import("./delete-document-dialog").then(module => ({ default: module.DeleteDocumentDialog }))
@@ -274,12 +277,27 @@ export function NavigationShell(
 		| "add"
 		| "search"
 		| { channel: Api.Channel; type: "delete" | "rename" }
+		| { inviteUrl: string; type: "general-invite" }
 	>();
 	let [accountOpen, setAccountOpen] = useState(false);
 	let creatingProjectIds = useRef<Set<string>>(new Set());
 	let [creatingProjectIdsForView, setCreatingProjectIdsForView] = useState<ReadonlySet<string>>(
 		() => new Set(),
 	);
+	let [creatingGeneralDocument, setCreatingGeneralDocument] = useState(false);
+	let [generalDocuments, setGeneralDocuments] = useState<Api.Channel[]>([]);
+	// The General Documents sidebar section lists what the member has joined;
+	// refetched whenever the open document changes (a join is a navigation).
+	useEffect(() => {
+		let active = true;
+		Api.myGeneralDocuments().then(
+			({ channels }) => active && setGeneralDocuments(channels),
+			() => {},
+		);
+		return () => {
+			active = false;
+		};
+	}, [user.id, location.pathname]);
 	let [focusProjectId, setFocusProjectId] = useState<string>();
 	let [width, resize] = useSidebarWidth();
 	let mode = useNavigationMode();
@@ -330,8 +348,8 @@ export function NavigationShell(
 		: undefined;
 	let routedChannel = route.page === "document" || route.page === "child"
 		? projects.flatMap(project => project.documents.channels).find(channel =>
-			channel.repositoryOwner.toLocaleLowerCase() === route.owner.toLocaleLowerCase()
-			&& channel.repositoryName.toLocaleLowerCase() === route.repository.toLocaleLowerCase()
+			channel.repositoryOwner?.toLocaleLowerCase() === route.owner.toLocaleLowerCase()
+			&& channel.repositoryName?.toLocaleLowerCase() === route.repository.toLocaleLowerCase()
 			&& channel.slug === (route.page === "child" ? route.childSlug : route.slug)
 		)
 		: undefined;
@@ -405,7 +423,8 @@ export function NavigationShell(
 		};
 		resolvedDocumentRef.current = loaded;
 		setResolvedDocument(loaded);
-		upsertDocument(loaded.channel);
+		// General documents sit outside every project catalogue.
+		if (loaded.channel.repositoryId) upsertDocument(loaded.channel);
 		if (loaded.channel.archivedAt) {
 			clearLastDocument(channel.id);
 			return;
@@ -425,6 +444,7 @@ export function NavigationShell(
 		) return;
 		visitRevision.current++;
 		latestVisitedDocument.current = channel.id;
+		if (!channel.repositoryId) return;
 		let current = navigationRef.current;
 		if (!current) {
 			pendingVisitedRepository.current = channel.repositoryId;
@@ -449,12 +469,14 @@ export function NavigationShell(
 			let next = accepted === current.channel ? current : { ...current, channel: accepted };
 			resolvedDocumentRef.current = next;
 			setResolvedDocument(next);
-			upsertDocument(next.channel);
+			if (next.channel.repositoryId) upsertDocument(next.channel);
 			let activeRoute = currentRoute.current;
 			if (
 				current.routeKey === currentRouteKey.current
 				&& (activeRoute.page === "channel"
 					|| activeRoute.page === "document")
+				&& accepted.repositoryOwner
+				&& accepted.repositoryName
 			) {
 				let path = documentPath(
 					accepted.repositoryOwner,
@@ -553,7 +575,26 @@ export function NavigationShell(
 		}
 	};
 
-	let active = activeProject(projects, currentDocumentId, resolvedChannel?.repositoryId);
+	let createGeneralDocument = async () => {
+		if (creatingGeneralDocument) return;
+		setCreatingGeneralDocument(true);
+		try {
+			let created = await Api.createGeneralDocument();
+			setDialog(undefined);
+			navigate(generalDocumentPath(created.channel.slug));
+			setDialog({ type: "general-invite", inviteUrl: created.inviteUrl });
+		} catch (reason) {
+			setError({ reason, retry: "refresh" });
+		} finally {
+			setCreatingGeneralDocument(false);
+		}
+	};
+
+	let active = activeProject(
+		projects,
+		currentDocumentId,
+		resolvedChannel?.repositoryId ?? undefined,
+	);
 	let currentChannel = projects.flatMap(project => project.documents.channels)
 		.find(channel => channel.id === currentDocumentId) ?? resolvedChannel;
 	let currentChannelRef = useRef<Api.Channel | undefined>(undefined);
@@ -634,7 +675,9 @@ export function NavigationShell(
 			setResolvedDocument(undefined);
 		}
 		setDialog(currentDialog =>
-			typeof currentDialog === "object" && currentDialog.channel.id === documentId
+			typeof currentDialog === "object"
+				&& "channel" in currentDialog
+				&& currentDialog.channel.id === documentId
 				? undefined
 				: currentDialog
 		);
@@ -770,6 +813,7 @@ export function NavigationShell(
 				canCreateDocument={!active || canManageProject(active)}
 				creatingProjectIds={creatingProjectIdsForView}
 				creatingNewDocument={!!active && creatingProjectIdsForView.has(active.repositoryId)}
+				creatingGeneralDocument={creatingGeneralDocument}
 				currentDocumentId={currentDocumentId}
 				onAccount={() => setAccountOpen(open => !open)}
 				onAddProject={() => showDialog("add")}
@@ -779,6 +823,7 @@ export function NavigationShell(
 					else requestAnimationFrame(() => drawerOpener.current?.focus({ preventScroll: true }));
 				}}
 				onCreateDocument={project => void createDocument(project)}
+				onCreateGeneralDocument={() => void createGeneralDocument()}
 				onDocumentAction={documentAction}
 				onLoadMore={loadMore}
 				onNewDocument={newDocument}
@@ -786,6 +831,7 @@ export function NavigationShell(
 				onCatalogueModeChange={setCatalogueMode}
 				projects={projects}
 				catalogueMode={catalogueMode}
+				generalDocuments={generalDocuments}
 				user={user}
 			/>
 		</Suspense>
@@ -903,6 +949,18 @@ export function NavigationShell(
 								motion={dialogMotion}
 								onDismiss={() => setDialog(undefined)}
 								onRenamed={acceptChannel}
+							/>
+						</Suspense>
+					</LazyDialogBoundary>
+				)}
+				{dialogMotion && typeof presentedDialog === "object"
+					&& presentedDialog.type === "general-invite" && (
+					<LazyDialogBoundary>
+						<Suspense fallback={null}>
+							<GeneralInviteDialog
+								inviteUrl={presentedDialog.inviteUrl}
+								motion={dialogMotion}
+								onDismiss={() => setDialog(undefined)}
 							/>
 						</Suspense>
 					</LazyDialogBoundary>

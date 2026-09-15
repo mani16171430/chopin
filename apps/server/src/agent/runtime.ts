@@ -13,6 +13,9 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
+import { argKeys, byteSize, silentLog } from "./activity-log";
+
+import type { ActivityLog } from "./activity-log";
 import type { MessageParam, ToolUnion } from "@anthropic-ai/sdk/resources/messages";
 import type { Session, SessionEvent, Tool, Unsubscribe } from "./types";
 
@@ -29,6 +32,8 @@ export type SessionConfig = {
 	/** Re-checked before every tool call that doesn't set `skipPermission`. */
 	gate: (toolName: string, args: unknown) => Promise<GateResult>;
 	maxTokens?: number;
+	/** Activity sink; silent (drops everything) when not supplied. */
+	log?: ActivityLog;
 };
 
 export type RuntimeClient = {
@@ -62,6 +67,7 @@ class LiveSession implements Session {
 	readonly sessionId: string;
 	#client: RuntimeClient;
 	#config: SessionConfig;
+	#log: ActivityLog;
 	#tools: Map<string, Tool>;
 	#anthropicTools: ToolUnion[];
 	#messages: MessageParam[] = [];
@@ -73,6 +79,7 @@ class LiveSession implements Session {
 		this.sessionId = toolId();
 		this.#client = client;
 		this.#config = config;
+		this.#log = config.log ?? silentLog();
 		this.#tools = new Map(config.tools.map(tool => [tool.name, tool]));
 		this.#anthropicTools = toAnthropicTools(config.tools);
 	}
@@ -103,6 +110,15 @@ class LiveSession implements Session {
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
 			if (this.#closed) return;
 			let messageId = toolId();
+			let requested = Date.now();
+			this.#log.record({
+				kind: "llm.request",
+				model: this.#config.model,
+				maxTokens: this.#config.maxTokens ?? DEFAULT_MAX_TOKENS,
+				messageCount: this.#messages.length,
+				toolCount: this.#anthropicTools.length,
+				iteration,
+			});
 			let stream = this.#client.messages.stream({
 				model: this.#config.model,
 				max_tokens: this.#config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -119,18 +135,30 @@ class LiveSession implements Session {
 			let final = await stream.finalMessage();
 			this.#current = undefined;
 
+			let calls = final.content.filter(
+				(block): block is Extract<typeof block, { type: "tool_use" }> => block.type === "tool_use",
+			);
+			this.#log.record({
+				kind: "llm.response",
+				model: final.model,
+				stopReason: final.stop_reason,
+				inputTokens: final.usage?.input_tokens,
+				outputTokens: final.usage?.output_tokens,
+				toolCalls: calls.length,
+				durationMs: Date.now() - requested,
+			});
+
 			let content = textOf(final.content as { type: string; text?: string }[]);
 			this.#emit({ type: "assistant.message", data: { content, messageId } });
+			this.#log.record({ kind: "assistant.message", messageId, contentBytes: byteSize(content) });
 			this.#messages.push({ role: "assistant", content: final.content });
 
 			if (final.stop_reason !== "tool_use") {
 				this.#emit({ type: "session.idle", data: {} });
+				this.#log.record({ kind: "session.idle", iterations: iteration + 1 });
 				return;
 			}
 
-			let calls = final.content.filter(
-				(block): block is Extract<typeof block, { type: "tool_use" }> => block.type === "tool_use",
-			);
 			let results: {
 				type: "tool_result";
 				tool_use_id: string;
@@ -142,12 +170,11 @@ class LiveSession implements Session {
 			}
 			this.#messages.push({ role: "user", content: results });
 		}
+		let message = "The planner exceeded its tool-call budget for this turn.";
+		this.#log.record({ kind: "session.error", errorType: "runaway", message });
 		this.#emit({
 			type: "session.error",
-			data: {
-				errorType: "runaway",
-				message: "The planner exceeded its tool-call budget for this turn.",
-			},
+			data: { errorType: "runaway", message },
 		});
 	}
 
@@ -169,6 +196,12 @@ class LiveSession implements Session {
 		if (!tool.skipPermission) {
 			let decision = await this.#config.gate(name, args);
 			if (!decision.allowed) {
+				this.#log.record({
+					kind: "permission.denied",
+					tool: name,
+					callId,
+					feedback: decision.feedback,
+				});
 				this.#emit({
 					type: "permission.completed",
 					data: {
@@ -186,12 +219,28 @@ class LiveSession implements Session {
 			}
 		}
 
+		this.#log.record({
+			kind: "tool.start",
+			tool: name,
+			callId,
+			argBytes: byteSize(args),
+			argKeys: argKeys(args),
+		});
 		this.#emit({
 			type: "tool.execution_start",
 			data: { arguments: args as never, toolCallId: callId, toolName: name },
 		});
+		let started = Date.now();
 		try {
 			let content = await tool.handler(args);
+			this.#log.record({
+				kind: "tool.complete",
+				tool: name,
+				callId,
+				success: true,
+				resultBytes: byteSize(content),
+				durationMs: Date.now() - started,
+			});
 			this.#emit({
 				type: "tool.execution_complete",
 				data: { success: true, toolCallId: callId, result: { content } },
@@ -199,6 +248,14 @@ class LiveSession implements Session {
 			return { type: "tool_result", tool_use_id: callId, content };
 		} catch (err) {
 			let message = err instanceof Error ? err.message : String(err);
+			this.#log.record({
+				kind: "tool.complete",
+				tool: name,
+				callId,
+				success: false,
+				error: message,
+				durationMs: Date.now() - started,
+			});
 			this.#emit({
 				type: "tool.execution_complete",
 				data: { success: false, toolCallId: callId, error: message },
@@ -218,6 +275,7 @@ class LiveSession implements Session {
 
 	#emitError(err: unknown): void {
 		let message = err instanceof Error ? err.message : String(err);
+		this.#log.record({ kind: "session.error", errorType: "unexpected", message });
 		this.#emit({ type: "session.error", data: { errorType: "unexpected", message } });
 	}
 }

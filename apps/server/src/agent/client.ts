@@ -9,8 +9,9 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
+import { activityLog } from "./activity-log";
 import { gate, publicResearchGate, terminalGate } from "./permissions";
-import { plannerFor } from "./planner";
+import { plannerFor, plannerGeneral } from "./planner";
 import { Runtime } from "./runtime";
 
 import type { RuntimeSource, SessionConfig } from "./runtime";
@@ -29,7 +30,8 @@ export type Toolbox = { tools: Tool[] };
 
 export type PlannerSession = {
 	token: string;
-	repository: HostedRepository;
+	/** Null on a general document — a channel with no repository. */
+	repository: HostedRepository | null;
 	bootstrap?: string;
 	authorize?: () => Promise<boolean>;
 };
@@ -60,12 +62,13 @@ export function plannerConfiguration(
 	toolbox: Toolbox,
 	options: PlannerSession,
 ): SessionConfig {
-	let repository = `${options.repository.owner}/${options.repository.name}`;
 	let tools = toolbox.tools;
 	return {
 		model: config.model,
 		system: [
-			plannerFor(repository),
+			options.repository
+				? plannerFor(`${options.repository.owner}/${options.repository.name}`)
+				: plannerGeneral(),
 			"More than one person may be in this conversation; their messages are prefixed with the speaker's handle.",
 			options.bootstrap ?? "",
 		].filter(Boolean).join(" "),
@@ -135,7 +138,10 @@ export async function openPlanner(
 	options: PlannerSession,
 ): Promise<Agent> {
 	if (!config.agent) throw new Error("The hosted agent is disabled.");
-	let session = await runtime.open(plannerConfiguration(config, toolbox, options));
+	let session = await runtime.open({
+		...plannerConfiguration(config, toolbox, options),
+		log: activityLog(`p${crypto.randomUUID()}`),
+	});
 	return { session, id: session.sessionId };
 }
 

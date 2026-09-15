@@ -28,6 +28,23 @@ export function documentPath(owner: string, repository: string, slug: string): s
 	return `${documentsPath(owner, repository)}/${encodedSegment(slug)}`;
 }
 
+/** The canonical route for a general document — one with no repository. */
+export function generalDocumentPath(slug: string): string {
+	return `/documents/general/${encodedSegment(slug)}`;
+}
+
+/** Parses /documents/general/:slug — the general-document route, repo-less by definition. */
+export function parseGeneralDocumentPath(pathname: string): { slug: string } | undefined {
+	let match = /^\/documents\/general\/([^/]+)\/?$/.exec(pathname);
+	if (!match) return undefined;
+	try {
+		let slug = decodeURIComponent(match[1]!);
+		return slug ? { slug } : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export function childDocumentPath(
 	owner: string,
 	repository: string,

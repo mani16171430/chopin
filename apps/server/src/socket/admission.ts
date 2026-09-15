@@ -2,6 +2,7 @@ import { isChannelId } from "../channels/id";
 import { GitHubError } from "../github/client";
 import { uid } from "../ids";
 import { StorageError } from "../storage/errors";
+import { isRepositoryChannel } from "../storage/model";
 
 import type { HostedAuth } from "../auth/routes";
 import type { SocketData } from "../wire";
@@ -30,6 +31,38 @@ export async function admit(
 		if (options.deleting?.(id)) return { status: 404, reason: "channel not found" };
 		let channel = await auth.storage.channels.get(id);
 		if (!channel) return { status: 404, reason: "channel not found" };
+		// A general document admits on held membership, not a repository role.
+		if (!isRepositoryChannel(channel)) {
+			let member = await auth.storage.invites.isMember(channel.id, session.user.id);
+			if (!member) return { status: 404, reason: "channel not found" };
+			let inviteCredential = auth.sessions.credential(request);
+			if (!inviteCredential) return { status: 401, reason: "authentication required" };
+			return {
+				data: {
+					room: channel.id,
+					channelTitle: channel.title,
+					channelSlug: channel.slug,
+					channelUpdatedAt: channel.updatedAt.toISOString(),
+					channelDescriptionRevision: channel.description?.revision ?? 0,
+					...(channel.description ? { channelDescription: channel.description.value } : {}),
+					...(channel.archivedAt
+						? { channelArchivedAt: channel.archivedAt.toISOString() }
+						: {}),
+					handle: session.user.login,
+					client: uid(),
+					canEdit: !channel.archivedAt && !options.readOnly?.(channel.id),
+					canManage: !channel.archivedAt,
+					principalId: session.user.id,
+					sessionId: session.session.id,
+					authorizedUntil: session.session.expiresAt.getTime(),
+					credential: inviteCredential,
+					repositoryId: null,
+					repositoryOwner: null,
+					repositoryName: null,
+					accessCheckedAt: Date.now(),
+				},
+			};
+		}
 		let access = await auth.sessions.use(
 			session,
 			token =>

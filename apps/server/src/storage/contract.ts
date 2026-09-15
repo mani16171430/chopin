@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
 	backgroundJob,
 	contractId as id,
+	generalChannel,
 	openedStorage as opened,
 	userAndChannel,
 } from "./contract-support";
@@ -2812,6 +2813,175 @@ export function storageContract(name: string, factory: Factory): void {
 					expect(err).toBeInstanceOf(StorageError);
 					expect((err as StorageError).failure).toBe("conflict");
 				}
+			} finally {
+				await storage.close();
+			}
+		});
+
+		/*
+		 * Invite links on a general document. The store sees only the token's
+		 * hash; the lifecycle is mint → resolve → join → isMember, and rotate
+		 * (mint again) or revoke cuts off everyone the old link let in.
+		 */
+		it("mints, resolves, and reads back a general document's invite", async () => {
+			let storage = await opened(factory);
+			try {
+				let { userId } = await userAndChannel(storage);
+				let { channelId } = await generalChannel(storage, userId);
+				let now = new Date("2026-01-05T03:04:05.000Z");
+
+				let invite = await storage.invites.mint({
+					channelId,
+					tokenHash: id("token-hash"),
+					createdBy: userId,
+					now,
+				});
+				expect(invite.channelId).toBe(channelId);
+				expect(invite.revokedAt).toBeUndefined();
+
+				expect(await storage.invites.live(channelId)).toMatchObject({ id: invite.id });
+				expect(await storage.invites.resolve(invite.tokenHash)).toMatchObject({ id: invite.id });
+				// A hash that was never minted resolves to nothing.
+				expect(await storage.invites.resolve(id("other-token"))).toBeUndefined();
+				// A channel with no invite has no live invite.
+				expect(await storage.invites.live(id("no-invite-channel"))).toBeUndefined();
+			} finally {
+				await storage.close();
+			}
+		});
+
+		it("keeps at most one live invite per channel when minting again", async () => {
+			let storage = await opened(factory);
+			try {
+				let { userId } = await userAndChannel(storage);
+				let { channelId } = await generalChannel(storage, userId);
+				let now = new Date("2026-01-05T03:04:05.000Z");
+
+				let first = await storage.invites.mint({
+					channelId,
+					tokenHash: id("first-token"),
+					createdBy: userId,
+					now,
+				});
+				let second = await storage.invites.mint({
+					channelId,
+					tokenHash: id("second-token"),
+					createdBy: userId,
+					now: new Date("2026-01-05T04:04:05.000Z"),
+				});
+
+				// The first is revoked, the second is the live one.
+				expect(await storage.invites.live(channelId)).toMatchObject({ id: second.id });
+				expect(await storage.invites.resolve(first.tokenHash)).toBeUndefined();
+				expect(await storage.invites.resolve(second.tokenHash)).toMatchObject({ id: second.id });
+			} finally {
+				await storage.close();
+			}
+		});
+
+		it("joins and reads membership, idempotently", async () => {
+			let storage = await opened(factory);
+			try {
+				let { userId } = await userAndChannel(storage);
+				let { channelId } = await generalChannel(storage, userId);
+				let now = new Date("2026-01-05T03:04:05.000Z");
+				let invite = await storage.invites.mint({
+					channelId,
+					tokenHash: id("token-hash"),
+					createdBy: userId,
+					now,
+				});
+
+				expect(await storage.invites.isMember(channelId, userId)).toBe(false);
+				await storage.invites.join({ channelId, userId, inviteId: invite.id, now });
+				expect(await storage.invites.isMember(channelId, userId)).toBe(true);
+				// Re-joining is a no-op, not an error.
+				await storage.invites.join({
+					channelId,
+					userId,
+					inviteId: invite.id,
+					now: new Date("2026-01-05T05:04:05.000Z"),
+				});
+				expect(await storage.invites.isMember(channelId, userId)).toBe(true);
+				// Membership is per user and per channel.
+				expect(await storage.invites.isMember(channelId, id("other-user"))).toBe(false);
+				expect(await storage.invites.isMember(id("other-channel"), userId)).toBe(false);
+			} finally {
+				await storage.close();
+			}
+		});
+
+		it("drops a revoked invite's members (rotate flushes everyone)", async () => {
+			let storage = await opened(factory);
+			try {
+				let { userId } = await userAndChannel(storage);
+				let { channelId } = await generalChannel(storage, userId);
+				let now = new Date("2026-01-05T03:04:05.000Z");
+
+				// Two members join on the first invite.
+				let other = id("member");
+				await storage.users.put({
+					id: other,
+					login: "hubot",
+					avatarUrl: "https://example.test/b",
+					now,
+				});
+				let first = await storage.invites.mint({
+					channelId,
+					tokenHash: id("first-token"),
+					createdBy: userId,
+					now,
+				});
+				await storage.invites.join({ channelId, userId, inviteId: first.id, now });
+				await storage.invites.join({ channelId, userId: other, inviteId: first.id, now });
+				expect(await storage.invites.isMember(channelId, userId)).toBe(true);
+				expect(await storage.invites.isMember(channelId, other)).toBe(true);
+
+				// Rotating revokes the old invite and flushes everyone it let in —
+				// the rotator included. The new link is the only way back.
+				let second = await storage.invites.mint({
+					channelId,
+					tokenHash: id("second-token"),
+					createdBy: userId,
+					now: new Date("2026-01-05T04:04:05.000Z"),
+				});
+				expect(await storage.invites.isMember(channelId, userId)).toBe(false);
+				expect(await storage.invites.isMember(channelId, other)).toBe(false);
+
+				// Re-joining on the new invite restores membership.
+				await storage.invites.join({ channelId, userId, inviteId: second.id, now });
+				expect(await storage.invites.isMember(channelId, userId)).toBe(true);
+			} finally {
+				await storage.close();
+			}
+		});
+
+		it("revoking an invite drops its members and stops resolving", async () => {
+			let storage = await opened(factory);
+			try {
+				let { userId } = await userAndChannel(storage);
+				let { channelId } = await generalChannel(storage, userId);
+				let now = new Date("2026-01-05T03:04:05.000Z");
+				let invite = await storage.invites.mint({
+					channelId,
+					tokenHash: id("token-hash"),
+					createdBy: userId,
+					now,
+				});
+				await storage.invites.join({ channelId, userId, inviteId: invite.id, now });
+				expect(await storage.invites.isMember(channelId, userId)).toBe(true);
+
+				let revoked = await storage.invites.revoke(
+					invite.id,
+					new Date("2026-01-05T04:04:05.000Z"),
+				);
+				expect(revoked).toBe(true);
+				expect(await storage.invites.resolve(invite.tokenHash)).toBeUndefined();
+				expect(await storage.invites.live(channelId)).toBeUndefined();
+				expect(await storage.invites.isMember(channelId, userId)).toBe(false);
+
+				// Revoking again is a no-op.
+				expect(await storage.invites.revoke(invite.id, now)).toBe(false);
 			} finally {
 				await storage.close();
 			}

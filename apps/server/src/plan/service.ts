@@ -328,7 +328,7 @@ function legacyCreation(
 function restoredState(
 	value: JsonValue,
 	pristine: boolean,
-	scope?: { channelId: string; repositoryId: string },
+	scope?: { channelId: string; repositoryId: string | null },
 ): Sidecar {
 	if (value === null && pristine) {
 		return {

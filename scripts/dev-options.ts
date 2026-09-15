@@ -11,9 +11,10 @@ export type ExeDev = {
 };
 
 export function parseDevTarget(args: string[]): DevTarget {
-	if (args.length === 0) return "local";
-	if (args.length === 1 && args[0] === "--exe") return "exe";
-	throw new Error("usage: bun scripts/dev.ts [--exe]");
+	let rest = args.filter(arg => arg !== "--no-watch");
+	if (rest.length === 0) return "local";
+	if (rest.length === 1 && rest[0] === "--exe") return "exe";
+	throw new Error("usage: bun scripts/dev.ts [--exe] [--no-watch]");
 }
 
 export function exeDev(name: string): ExeDev {

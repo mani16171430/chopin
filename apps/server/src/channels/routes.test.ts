@@ -141,6 +141,7 @@ async function setup(random?: () => number) {
 		router,
 		storage,
 		github,
+		sessions,
 		cookie: pair(issued.cookie),
 		sessionId: issued.id,
 		reset,
@@ -168,6 +169,31 @@ function createChannel(storage: MemoryStorage, now: Date, title: string) {
 		createdBy: "U_octocat",
 		now,
 	});
+}
+
+async function setupGeneral() {
+	let base = await setup();
+	await base.storage.users.put({
+		id: "U_guest",
+		login: "guest",
+		avatarUrl: "avatar",
+		now: base.now,
+	});
+	let guest = await base.sessions.issue("U_guest", grant("ghu_guest"));
+	return { ...base, guestCookie: pair(guest.cookie) };
+}
+
+function tokenOf(inviteUrl: string): string {
+	return inviteUrl.slice(inviteUrl.lastIndexOf("/") + 1);
+}
+
+async function createGeneral(router: Router, cookie: string, title = "Shared plan") {
+	let response = await router.handle(request("/api/documents/general", cookie, {
+		method: "POST",
+		headers: { "content-type": "application/json", origin: "https://chopin.test" },
+		body: JSON.stringify({ title }),
+	}));
+	return { response, body: await response!.json() };
 }
 
 describe("channel routes", () => {
@@ -871,6 +897,337 @@ describe("channel routes", () => {
 		github.repo = { ...github.repo, id: "R_score" };
 		let response = await router.handle(request(`/api/channels/${channel.id}`, cookie));
 		expect(response!.status).toBe(404);
+	});
+
+	it("creates a general document with a first invite and auto-joined creator", async () => {
+		let { router, storage, cookie } = await setupGeneral();
+		let { response, body } = await createGeneral(router, cookie);
+		expect(response!.status).toBe(201);
+		expect(body.channel.repositoryId).toBeNull();
+		expect(body.channel.repositoryOwner).toBeNull();
+		expect(body.channel.repositoryName).toBeNull();
+		expect(body.channel.title).toBe("Shared plan");
+		expect(body.channel.slug).toBe("shared-plan");
+		expect(response!.headers.get("location")).toBe("/documents/general/shared-plan");
+		expect(body.inviteUrl).toMatch(/^https:\/\/chopin\.test\/join\/[0-9a-f-]{36}$/);
+		let stored = await storage.channels.get(body.channel.id);
+		expect(stored).toMatchObject({
+			repositoryId: null,
+			repositoryOwner: null,
+			repositoryName: null,
+			createdBy: "U_octocat",
+		});
+		// The raw token is never stored; only its hash is.
+		let live = await storage.invites.live(body.channel.id);
+		expect(live?.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+		expect(live?.tokenHash).not.toBe(tokenOf(body.inviteUrl));
+		expect(await storage.invites.isMember(body.channel.id, "U_octocat")).toBe(true);
+
+		let detail = await router.handle(request(`/api/channels/${body.channel.id}`, cookie));
+		expect(detail!.status).toBe(200);
+		expect((await detail!.json()).canEdit).toBe(true);
+
+		let wrongOrigin = await router.handle(request("/api/documents/general", cookie, {
+			method: "POST",
+			headers: { origin: "https://evil.test" },
+			body: "{}",
+		}));
+		expect(wrongOrigin!.status).toBe(403);
+		let anonymous = await router.handle(request("/api/documents/general", undefined, {
+			method: "POST",
+			headers: { origin: "https://chopin.test" },
+			body: "{}",
+		}));
+		expect(anonymous!.status).toBe(401);
+	});
+
+	it("bounces a signed-out join through GitHub sign-in with return_to", async () => {
+		let { router, cookie } = await setupGeneral();
+		let { body } = await createGeneral(router, cookie);
+		let token = tokenOf(body.inviteUrl);
+		let response = await router.handle(request(`/join/${token}`));
+		expect(response!.status).toBe(302);
+		expect(response!.headers.get("location")).toBe(
+			`/auth/github?return_to=${encodeURIComponent(`/join/${token}`)}`,
+		);
+	});
+
+	it("joins a signed-in holder and rejects wrong or revoked tokens", async () => {
+		let { router, storage, cookie, guestCookie } = await setupGeneral();
+		let { body } = await createGeneral(router, cookie);
+		let token = tokenOf(body.inviteUrl);
+
+		expect(await storage.invites.isMember(body.channel.id, "U_guest")).toBe(false);
+		let joined = await router.handle(request(`/join/${token}`, guestCookie));
+		expect(joined!.status).toBe(302);
+		expect(joined!.headers.get("location")).toBe("/documents/general/shared-plan");
+		expect(await storage.invites.isMember(body.channel.id, "U_guest")).toBe(true);
+
+		// Joining again is idempotent.
+		let again = await router.handle(request(`/join/${token}`, guestCookie));
+		expect(again!.status).toBe(302);
+
+		let detail = await router.handle(request(`/api/channels/${body.channel.id}`, guestCookie));
+		expect(detail!.status).toBe(200);
+
+		let wrong = await router.handle(request(`/join/${crypto.randomUUID()}`, guestCookie));
+		expect(wrong!.status).toBe(404);
+		expect(await wrong!.json()).toEqual({ error: "invite not found" });
+		let malformed = await router.handle(request("/join/not-a-token", guestCookie));
+		expect(malformed!.status).toBe(404);
+
+		// A revoked invite no longer resolves.
+		let live = await storage.invites.live(body.channel.id);
+		await storage.invites.revoke(live!.id, new Date("2026-08-13T12:01:00.000Z"));
+		let revoked = await router.handle(request(`/join/${token}`, guestCookie));
+		expect(revoked!.status).toBe(404);
+	});
+
+	it("rotates an invite, revoking the old token, only for a current member", async () => {
+		let { router, storage, cookie, guestCookie } = await setupGeneral();
+		let { body } = await createGeneral(router, cookie);
+		let oldToken = tokenOf(body.inviteUrl);
+		let rotate = (as: string) =>
+			router.handle(request(`/api/channels/${body.channel.id}/invite/rotate`, as, {
+				method: "POST",
+				headers: { origin: "https://chopin.test" },
+			}));
+
+		// A non-member cannot rotate.
+		let forbidden = await rotate(guestCookie);
+		expect(forbidden!.status).toBe(404);
+
+		let rotated = await rotate(cookie);
+		expect(rotated!.status).toBe(200);
+		let rotatedBody = await rotated!.json();
+		expect(rotatedBody.inviteUrl).toMatch(/^https:\/\/chopin\.test\/join\/[0-9a-f-]{36}$/);
+		let newToken = tokenOf(rotatedBody.inviteUrl);
+		expect(newToken).not.toBe(oldToken);
+
+		// The old token is revoked; the new one joins.
+		let oldJoin = await router.handle(request(`/join/${oldToken}`, guestCookie));
+		expect(oldJoin!.status).toBe(404);
+		let newJoin = await router.handle(request(`/join/${newToken}`, guestCookie));
+		expect(newJoin!.status).toBe(302);
+		expect(await storage.invites.isMember(body.channel.id, "U_guest")).toBe(true);
+
+		// A repository channel has no invite to rotate.
+		let repositoryChannel = await createChannel(
+			storage,
+			new Date("2026-08-13T12:00:00.000Z"),
+			"Repo doc",
+		);
+		let repoRotate = await router.handle(request(
+			`/api/channels/${repositoryChannel.id}/invite/rotate`,
+			cookie,
+			{ method: "POST", headers: { origin: "https://chopin.test" } },
+		));
+		expect(repoRotate!.status).toBe(404);
+
+		// Now a member, the guest may rotate too.
+		let memberRotate = await rotate(guestCookie);
+		expect(memberRotate!.status).toBe(200);
+
+		let csrf = await router.handle(request(
+			`/api/channels/${body.channel.id}/invite/rotate`,
+			cookie,
+			{ method: "POST", headers: { origin: "https://evil.test" } },
+		));
+		expect(csrf!.status).toBe(403);
+	});
+
+	it("rotating an invite drops everyone who joined on the old link", async () => {
+		let { router, storage, cookie, guestCookie } = await setupGeneral();
+		let { body } = await createGeneral(router, cookie);
+
+		// The guest joins on the first link.
+		let firstToken = tokenOf(body.inviteUrl);
+		let joined = await router.handle(request(`/join/${firstToken}`, guestCookie));
+		expect(joined!.status).toBe(302);
+		expect(await storage.invites.isMember(body.channel.id, "U_guest")).toBe(true);
+
+		// The creator rotates. Everyone who came in on the old link is dropped,
+		// including the rotator — rotate flushes everyone, no exception.
+		let rotated = await router.handle(request(
+			`/api/channels/${body.channel.id}/invite/rotate`,
+			cookie,
+			{ method: "POST", headers: { origin: "https://chopin.test" } },
+		));
+		expect(rotated!.status).toBe(200);
+		let newToken = tokenOf((await rotated!.json()).inviteUrl);
+
+		expect(await storage.invites.isMember(body.channel.id, "U_guest")).toBe(false);
+		expect(await storage.invites.isMember(body.channel.id, "U_octocat")).toBe(false);
+
+		// The old link is dead for re-joining too; the new link re-admits.
+		let oldJoin = await router.handle(request(`/join/${firstToken}`, guestCookie));
+		expect(oldJoin!.status).toBe(404);
+		let rejoin = await router.handle(request(`/join/${newToken}`, guestCookie));
+		expect(rejoin!.status).toBe(302);
+		expect(await storage.invites.isMember(body.channel.id, "U_guest")).toBe(true);
+	});
+
+	it("resolves a general document by slug for a member only", async () => {
+		let { router, storage, cookie, guestCookie } = await setupGeneral();
+		let { body } = await createGeneral(router, cookie);
+
+		let anonymous = await router.handle(request("/api/documents/general/shared-plan"));
+		expect(anonymous!.status).toBe(401);
+
+		// A non-member gets the same 404 as an unknown slug.
+		let outsider = await router.handle(request("/api/documents/general/shared-plan", guestCookie));
+		expect(outsider!.status).toBe(404);
+		let missing = await router.handle(request("/api/documents/general/no-such-doc", cookie));
+		expect(missing!.status).toBe(404);
+
+		let resolved = await router.handle(request("/api/documents/general/shared-plan", cookie));
+		expect(resolved!.status).toBe(200);
+		expect(await resolved!.json()).toMatchObject({
+			canEdit: true,
+			canManage: true,
+			channel: { id: body.channel.id, slug: "shared-plan", repositoryId: null },
+		});
+
+		// A joined member resolves it too.
+		await storage.invites.join({
+			channelId: body.channel.id,
+			userId: "U_guest",
+			inviteId: (await storage.invites.live(body.channel.id))!.id,
+			now: new Date("2026-08-13T12:01:00.000Z"),
+		});
+		let memberView = await router.handle(
+			request("/api/documents/general/shared-plan", guestCookie),
+		);
+		expect(memberView!.status).toBe(200);
+
+		// An archived general document resolves read-only.
+		await storage.channels.archive({
+			id: body.channel.id,
+			now: new Date("2026-08-13T12:02:00.000Z"),
+		});
+		let archived = await router.handle(request("/api/documents/general/shared-plan", cookie));
+		expect(await archived!.json()).toMatchObject({ canEdit: false, canManage: false });
+	});
+
+	it("lets a member view the live invite link without rotating it", async () => {
+		let { router, storage, cookie, guestCookie } = await setupGeneral();
+		let { body } = await createGeneral(router, cookie);
+
+		let anonymous = await router.handle(request(`/api/channels/${body.channel.id}/invite`));
+		expect(anonymous!.status).toBe(401);
+
+		// A non-member is indistinguishable from an unknown channel.
+		let outsider = await router.handle(request(
+			`/api/channels/${body.channel.id}/invite`,
+			guestCookie,
+		));
+		expect(outsider!.status).toBe(404);
+
+		// A member reads the live link back — the same one minted at creation —
+		// and reading it does not rotate or flush anyone.
+		let read = await router.handle(request(
+			`/api/channels/${body.channel.id}/invite`,
+			cookie,
+		));
+		expect(read!.status).toBe(200);
+		let inviteUrl = (await read!.json()).inviteUrl;
+		expect(inviteUrl).toMatch(/^https:\/\/chopin\.test\/join\/[0-9a-f-]{36}$/);
+		expect(tokenOf(inviteUrl)).toBe(tokenOf(body.inviteUrl));
+		expect(await storage.invites.isMember(body.channel.id, "U_octocat")).toBe(true);
+
+		// A repository channel has no invite to read.
+		let repositoryChannel = await createChannel(
+			storage,
+			new Date("2026-08-13T12:00:00.000Z"),
+			"Repo doc",
+		);
+		let repoInvite = await router.handle(request(
+			`/api/channels/${repositoryChannel.id}/invite`,
+			cookie,
+		));
+		expect(repoInvite!.status).toBe(404);
+	});
+
+	it("self-heals a legacy invite on view without rotating or flushing", async () => {
+		let { router, storage, cookie } = await setupGeneral();
+		let { body } = await createGeneral(router, cookie);
+		// Strip the envelope to mimic a pre-recovery invite row.
+		let live = await storage.invites.live(body.channel.id);
+		await storage.invites.reseal(body.channel.id, live!.tokenHash, undefined as never);
+		// reseal with undefined envelope is the legacy shape; the read below heals it.
+		let read = await router.handle(request(`/api/channels/${body.channel.id}/invite`, cookie));
+		expect(read!.status).toBe(200);
+		let inviteUrl = (await read!.json()).inviteUrl;
+		expect(inviteUrl).toMatch(/^https:\/\/chopin\.test\/join\/[0-9a-f-]{36}$/);
+		// The member is untouched — no flush, and the invite is still live.
+		expect(await storage.invites.isMember(body.channel.id, "U_octocat")).toBe(true);
+		expect(await storage.invites.live(body.channel.id)).toBeDefined();
+	});
+
+	it("renames, archives, restores and deletes a general document for a member", async () => {
+		let { router, storage, cookie, guestCookie } = await setupGeneral();
+		let { body } = await createGeneral(router, cookie);
+		let id = body.channel.id;
+		let origin = { origin: "https://chopin.test" };
+
+		// Rename: member can, non-member cannot, and the general path moves.
+		let renamed = await router.handle(request(`/api/channels/${id}`, cookie, {
+			method: "PATCH",
+			headers: { "content-type": "application/json", ...origin },
+			body: JSON.stringify({ title: "Renamed plan" }),
+		}));
+		expect(renamed!.status).toBe(200);
+		expect(renamed!.headers.get("location")).toBe("/documents/general/renamed-plan");
+		expect((await renamed!.json()).channel.title).toBe("Renamed plan");
+		let outsiderRename = await router.handle(request(`/api/channels/${id}`, guestCookie, {
+			method: "PATCH",
+			headers: { "content-type": "application/json", ...origin },
+			body: JSON.stringify({ title: "Nope" }),
+		}));
+		expect(outsiderRename!.status).toBe(404);
+
+		// Delete requires archived first.
+		let prematureDelete = await router.handle(request(`/api/channels/${id}`, cookie, {
+			method: "DELETE",
+			headers: origin,
+		}));
+		expect(prematureDelete!.status).toBe(409);
+
+		// Archive then delete; restore in between.
+		let archived = await router.handle(request(`/api/channels/${id}/archive`, cookie, {
+			method: "POST",
+			headers: origin,
+		}));
+		expect(archived!.status).toBe(200);
+		expect((await archived!.json()).channel.archivedAt).toBeDefined();
+
+		let restored = await router.handle(request(`/api/channels/${id}/restore`, cookie, {
+			method: "POST",
+			headers: origin,
+		}));
+		expect(restored!.status).toBe(200);
+		expect((await restored!.json()).channel.archivedAt).toBeUndefined();
+
+		// Archive again, then delete succeeds and the document is gone.
+		await router.handle(request(`/api/channels/${id}/archive`, cookie, {
+			method: "POST",
+			headers: origin,
+		}));
+		let deleted = await router.handle(request(`/api/channels/${id}`, cookie, {
+			method: "DELETE",
+			headers: origin,
+		}));
+		expect(deleted!.status).toBe(204);
+		expect(await storage.channels.get(id)).toBeUndefined();
+
+		// A non-member cannot archive.
+		let { body: other } = await createGeneral(router, cookie);
+		let outsiderArchive = await router.handle(request(
+			`/api/channels/${other.channel.id}/archive`,
+			guestCookie,
+			{ method: "POST", headers: origin },
+		));
+		expect(outsiderArchive!.status).toBe(404);
 	});
 
 	it("lets an editor explicitly release the Copilot owner", async () => {

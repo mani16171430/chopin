@@ -8,13 +8,15 @@ import type { HostedAuth } from "../auth/routes";
 import type { AuthenticatedSession } from "../auth/session";
 import type { Repository } from "../github/client";
 import type { Router } from "../http/router";
-import type { ChannelRecord } from "../storage/model";
+import { isRepositoryChannel } from "../storage/model";
+
+import type { RepositoryChannel } from "../storage/model";
 import type { ResearchWorkspaceService } from "./service";
 
 export type ResearchWorkspaceRouteOptions = {
 	service: ResearchWorkspaceService;
 	ensureOwner: (
-		channel: ChannelRecord,
+		channel: RepositoryChannel,
 		session: AuthenticatedSession,
 		repository: Repository,
 	) => void | Promise<void>;
@@ -96,11 +98,13 @@ async function channelAccess(
 	session: AuthenticatedSession,
 	channelId: string,
 ): Promise<
-	{ channel: ChannelRecord; repository: Repository; session: AuthenticatedSession } | undefined
+	{ channel: RepositoryChannel; repository: Repository; session: AuthenticatedSession } | undefined
 > {
 	if (!isChannelId(channelId)) return undefined;
 	let channel = await auth.storage.channels.get(channelId);
 	if (!channel) return undefined;
+	// Research runs against a repository's documents; a general document has none.
+	if (!isRepositoryChannel(channel)) return undefined;
 	let resolved = await authorizedRepository(
 		auth,
 		session,

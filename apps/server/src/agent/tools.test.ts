@@ -774,3 +774,55 @@ test("planner graph edits name readiness blockers before changing a graph", asyn
 	});
 	expect(plan.graph).toBeUndefined();
 });
+
+test("read_cadence is present only when the room wires a store", async () => {
+	let { plan, server } = await opened("Cadence context.\n");
+	let base = {
+		plan,
+		server,
+		room: "test",
+		persist: () => Service.persist(plan),
+		exclusive: <T>(action: () => Promise<T>) => Service.exclusive(plan, action),
+		async publish() {},
+		anchors() {},
+		changes() {},
+	};
+
+	let without = toolbox(base);
+	expect(without.find(tool => tool.name === "read_cadence")).toBeUndefined();
+
+	let withStore = toolbox({ ...base, readCadence: async () => [] });
+	expect(withStore.find(tool => tool.name === "read_cadence")).toBeDefined();
+});
+
+test("read_cadence returns the room's proposals as given", async () => {
+	let { plan, server } = await opened("Cadence context.\n");
+	let items = [{
+		id: "item-1",
+		team: "payments",
+		op: "create",
+		kind: "work_item",
+		title: "Ship the thing",
+		fields: { operation: "create" },
+		confidence: 0.9,
+		needs: [],
+		status: "ready",
+		mcp_server: "cadence",
+		mcp_tool: "work_item",
+	}];
+	let tool = toolbox({
+		plan,
+		server,
+		room: "test",
+		persist: () => Service.persist(plan),
+		exclusive: <T>(action: () => Promise<T>) => Service.exclusive(plan, action),
+		async publish() {},
+		anchors() {},
+		changes() {},
+		readCadence: async () => items,
+	}).find(tool => tool.name === "read_cadence");
+	if (!tool?.handler) throw new Error("read_cadence is missing");
+	expect(tool.skipPermission).toBe(true);
+	expect(tool.parameters).toEqual({ type: "object", properties: {}, additionalProperties: false });
+	expect(JSON.parse(await tool.handler({} as never) as string)).toEqual(items);
+});

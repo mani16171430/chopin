@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { documentPath } from "@chopin/protocol/document-url";
-import { ChevronIcon, DocumentIcon } from "@chopin/icons";
+import { documentPath, generalDocumentPath } from "@chopin/protocol/document-url";
+import { ChevronIcon, DocumentIcon, SparkleIcon } from "@chopin/icons";
 import {
 	advanceDecisionView,
 	countUnanswered,
@@ -20,6 +20,7 @@ import { Chat } from "./chat/chat";
 import { CadenceUpdates } from "./cadence/cadence";
 import { Mcps } from "./chat/mcps";
 import { rememberChannel } from "./channel-recovery";
+import { rememberGeneralChannel } from "./general-recovery";
 import { decisionAttention, DecisionViewControl } from "./decision-view-control";
 import { newestDocumentMetadata } from "./document-actions";
 import { DocumentActionsMenu } from "./document-actions-menu";
@@ -32,6 +33,7 @@ import { Wire } from "./wire";
 import { useWorkspaceIds, useWorkspaceMode, useWorkspaceState, Workspace } from "./workspace";
 import { initialDocumentView, presentWorkspace, workspaceProfile } from "./workspace-model";
 
+import type { ReactNode } from "react";
 import type { Research, Session } from "@chopin/protocol";
 import type { DecisionView, DecisionViewState } from "@chopin/editor";
 import type { DocumentMetadata } from "./document-actions";
@@ -58,6 +60,8 @@ export function Header(
 	{
 		archivedAt,
 		canManage,
+		generate,
+		headerAction,
 		members,
 		label,
 		onAction,
@@ -65,6 +69,8 @@ export function Header(
 	}: {
 		archivedAt?: string;
 		canManage: boolean;
+		generate?: { disabled: boolean; onGenerate: () => void };
+		headerAction?: ReactNode;
 		members: Session.Member[];
 		label: string;
 		onAction: (action: DocumentAction) => void;
@@ -122,6 +128,19 @@ export function Header(
 						Archived, read-only
 					</span>
 				)}
+				{generate && (
+					<button
+						aria-label="Generate a Razorpay AI Doc about this document"
+						className="btn btn-md btn-ghost room-generate-aidoc ml-1 shrink-0"
+						disabled={generate.disabled}
+						onClick={generate.onGenerate}
+						title="Generate a Razorpay AI Doc about this document"
+						type="button"
+					>
+						<SparkleIcon aria-hidden="true" />
+						<span className="hidden sm:inline">AI Doc</span>
+					</button>
+				)}
 			</div>
 			<div
 				aria-label={`People here: ${people.join(", ")}`}
@@ -142,6 +161,7 @@ export function Header(
 					</span>
 				)}
 			</div>
+			{headerAction && <div className="room-header-action ml-2 shrink-0">{headerAction}</div>}
 		</header>
 	);
 }
@@ -155,6 +175,7 @@ export function RoomWorkspace(
 		description,
 		descriptionRevision,
 		handle,
+		headerAction,
 		label,
 		onMetadataChanged,
 		presentation,
@@ -251,14 +272,35 @@ export function RoomWorkspace(
 		metadataRef.current = metadata;
 		setMetadata(metadata);
 		let currentRepository = repositoryRef.current;
-		rememberChannel(
-			userId,
-			{ id: room, title: metadata.title, slug: metadata.slug },
-			currentRepository,
-		);
+		if (currentRepository) {
+			rememberChannel(
+				userId,
+				{ id: room, title: metadata.title, slug: metadata.slug },
+				currentRepository,
+			);
+		} else {
+			rememberGeneralChannel(userId, { id: room, title: metadata.title, slug: metadata.slug });
+		}
 		onDocumentChanged(room, metadata);
 		if (onMetadataChanged) {
 			onMetadataChanged(metadata);
+			return;
+		}
+		if (!currentRepository) {
+			// A general document only ever sits at its general path or channel id.
+			let generalPath = generalDocumentPath(metadata.slug);
+			let generalChannelPath = `/channels/${encodeURIComponent(room)}`;
+			if (
+				location.pathname !== generalPath
+				&& (location.pathname === generalDocumentPath(previous.slug)
+					|| location.pathname === generalChannelPath)
+			) {
+				history.replaceState(
+					history.state,
+					"",
+					`${generalPath}${location.search}${location.hash}`,
+				);
+			}
 			return;
 		}
 		let previousPath = documentPath(
@@ -472,6 +514,13 @@ export function RoomWorkspace(
 				<Header
 					archivedAt={workspaceArchivedAt}
 					canManage={effectiveCanManage}
+					generate={agent
+						? {
+							disabled: status !== "connected" || !workspaceCanEdit || chatActivity.busy,
+							onGenerate: () => wire?.send("doc:generate-ai"),
+						}
+						: undefined}
+					headerAction={headerAction}
 					members={members}
 					label={metadata.title}
 					onAction={action => onDocumentAction(room, action)}

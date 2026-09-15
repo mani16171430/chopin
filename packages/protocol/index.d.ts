@@ -120,6 +120,7 @@ export type { Research } from "./research";
 /** Everything a client may send. */
 export type Incoming =
 	| Session.Incoming
+	| import("./aidoc").Aidoc.Incoming
 	| import("./cadence").Cadence.Incoming
 	| import("./chat").Chat.Incoming
 	| import("./comment").Comment.Incoming

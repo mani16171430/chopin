@@ -4,6 +4,7 @@ import { ULID, ulid } from "@chopin/dialect";
 import {
 	childDocumentPath,
 	documentPath,
+	generalDocumentPath,
 	parseChildDocumentPath,
 	parseDocumentPath,
 } from "@chopin/protocol/document-url";
@@ -16,6 +17,8 @@ import {
 } from "../jobs/research-workspace";
 
 import type { Chat as Wire, Job } from "@chopin/protocol";
+import { isRepositoryChannel } from "../storage/model";
+
 import type { ChannelRecord, JsonValue } from "../storage/model";
 import type { StorageAdapter } from "../storage/port";
 import type { DocumentTarget } from "../plan/service";
@@ -86,7 +89,7 @@ export type ReferenceServiceOptions = {
 
 export type ResolveReferences = {
 	channelId: string;
-	repositoryId: string;
+	repositoryId: string | null;
 	text: string;
 	destination: Wire.Destination;
 	requests?: Wire.ReferenceRequest[];
@@ -99,7 +102,7 @@ export type ResolvedMessage = {
 
 export type ReadReference = {
 	channelId: string;
-	repositoryId: string;
+	repositoryId: string | null;
 	reference: Wire.Reference;
 };
 
@@ -424,7 +427,7 @@ export function restoreReferences(
 	value: unknown,
 	text: string,
 	seenIds = new Set<string>(),
-	scope?: { channelId: string; repositoryId: string },
+	scope?: { channelId: string; repositoryId: string | null },
 ): Wire.Reference[] {
 	if (!Array.isArray(value) || value.length > MAX_REFERENCES) {
 		throw new ChatReferenceError("Stored references are invalid.");
@@ -612,6 +615,8 @@ export class ReferenceService {
 	}
 
 	async #documentHref(target: ChannelRecord): Promise<string> {
+		// A general document has no repository to address it by; it routes under /general.
+		if (!isRepositoryChannel(target)) return generalDocumentPath(target.slug);
 		if (!target.parentChannelId) {
 			return documentPath(target.repositoryOwner, target.repositoryName, target.slug);
 		}
@@ -674,8 +679,8 @@ export class ReferenceService {
 				end: item.end,
 				label: `%${detail.workspace.title}`,
 				href: legacyResearchPath(
-					parent.repositoryOwner,
-					parent.repositoryName,
+					parent.repositoryOwner!,
+					parent.repositoryName!,
 					parent.slug,
 					detail.workspace.id,
 				),
@@ -748,8 +753,8 @@ export class ReferenceService {
 			observedRevision: stored.observedRevision,
 			currentRevision: view.workspace.revision,
 			href: legacyResearchPath(
-				parent.repositoryOwner,
-				parent.repositoryName,
+				parent.repositoryOwner!,
+				parent.repositoryName!,
 				parent.slug,
 				view.workspace.id,
 			),

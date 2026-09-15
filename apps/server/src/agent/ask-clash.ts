@@ -17,7 +17,41 @@
  * client shape below is what it will build on.
  */
 
+import { appendFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { ClashConfig } from "../config";
+
+/**
+ * Every `ask_clash` call is logged — the question sent and the answer (or
+ * failure) returned — as one JSON line per call, to `logs/ask_clash.log`.
+ * The directory is git-ignored; the log is a local audit trail, never shipped.
+ * The API key is never in it. Logging is best-effort and never fails a call.
+ */
+// Read per call so a test can point the log elsewhere before the first call.
+function logFile(): { dir: string; path: string } {
+	let dir = process.env.ASK_CLASH_LOG_DIR || "logs";
+	return { dir, path: join(dir, "ask_clash.log") };
+}
+
+type ClashLogEntry = {
+	at: string;
+	runId?: string;
+	question: string;
+	outcome: "answered" | "failed" | "timeout" | "cancelled" | "stuck" | "error";
+	response: string;
+	durationMs: number;
+};
+
+async function logCall(entry: ClashLogEntry): Promise<void> {
+	try {
+		let { dir, path } = logFile();
+		await mkdir(dir, { recursive: true });
+		await appendFile(path, JSON.stringify(entry) + "\n");
+	} catch (err) {
+		console.error("[ask_clash] could not write the call log", err);
+	}
+}
 
 /** Terminal turn statuses; anything else keeps polling. */
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
@@ -29,8 +63,12 @@ const STUCK = new Set(["waiting_for_input"]);
 
 /** PoC cadence. Production is the prior repo's 15s→60s age-based backoff. */
 const POLL_INTERVAL_MS = 2_000;
-/** A long turn is normal; the room watches the tool run while it works. */
-const POLL_TIMEOUT_MS = 1_800_000;
+/**
+ * A slow run is indistinguishable from a wedged one, but a blocking planner turn
+ * must not freeze the room on it forever. Two hours is long enough for a real
+ * answer; past it the run is cancelled and the planner offers to retry.
+ */
+const POLL_TIMEOUT_MS = 7_200_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export type RunRef = { runId: string; turnId: string };
@@ -65,6 +103,16 @@ export type TurnEventsPage = {
 
 export class ClashError extends Error {
 	override readonly name = "ClashError";
+	/**
+	 * True when the failure is the transport, not the platform's answer — a
+	 * dropped socket, a reset, a timeout. Only a read may retry these; a write
+	 * (createRun) must not, or a retried POST could start a second run.
+	 */
+	readonly transient: boolean;
+	constructor(message: string, transient = false) {
+		super(message);
+		this.transient = transient;
+	}
 }
 
 /** What the fetch layer returns; status drives the caller's branching. */
@@ -112,6 +160,7 @@ async function call(
 			`the agent platform could not be reached (${
 				err instanceof Error ? err.message : "network error"
 			})`,
+			true, // transport failure — safe to retry on a read
 		);
 	}
 	if (reply.status === 401 || reply.status === 403) {
@@ -215,35 +264,84 @@ export async function askClash(
 		timeoutMs: POLL_TIMEOUT_MS,
 	},
 ): Promise<string> {
-	let ref = await createRun(config, question, fetcher);
+	let started = Date.now();
+	// One log line per call, written however the call ends.
+	let record = (outcome: ClashLogEntry["outcome"], response: string, runId?: string) =>
+		logCall({
+			at: new Date().toISOString(),
+			runId,
+			question,
+			outcome,
+			response,
+			durationMs: Date.now() - started,
+		});
+
+	let ref: RunRef;
+	try {
+		ref = await createRun(config, question, fetcher);
+	} catch (err) {
+		let message = err instanceof Error ? err.message : String(err);
+		await record("error", message);
+		throw err;
+	}
 	let deadline = Date.now() + cadence.timeoutMs;
 
 	for (;;) {
 		await Bun.sleep(cadence.intervalMs);
-		let run = await getRun(config, ref.runId, fetcher);
+		let run: Run;
+		try {
+			run = await getRun(config, ref.runId, fetcher);
+		} catch (err) {
+			// A dropped socket on a poll is a hiccup, not an answer: the run is
+			// still going on the platform, so keep waiting until the deadline
+			// rather than failing the whole call over one reset connection.
+			if (err instanceof ClashError && err.transient && Date.now() < deadline) {
+				continue;
+			}
+			let message = err instanceof Error ? err.message : String(err);
+			await record("error", message, ref.runId);
+			throw err;
+		}
 		let turn = run.current_turn;
 		let status = turn?.status ?? "";
 
 		if (TERMINAL.has(status)) {
-			if (status === "completed" && turn?.result_text) return turn.result_text;
+			if (status === "completed" && turn?.result_text) {
+				await record("answered", turn.result_text, ref.runId);
+				return turn.result_text;
+			}
 			if (status === "failed") {
 				let reason = turn?.error_message || turn?.error_reason || "no reason given";
-				return `Error: the agent run failed: ${reason}`;
+				let response = `Error: the agent run failed: ${reason}`;
+				await record("failed", response, ref.runId);
+				return response;
 			}
-			if (status === "completed") return "Error: the agent finished without an answer.";
-			return `Error: the agent run was ${status}.`;
+			if (status === "completed") {
+				let response = "Error: the agent finished without an answer.";
+				await record("failed", response, ref.runId);
+				return response;
+			}
+			let response = `Error: the agent run was ${status}.`;
+			await record("cancelled", response, ref.runId);
+			return response;
 		}
 
 		if (STUCK.has(status)) {
 			await cancelRun(config, ref.runId, fetcher);
-			return "Error: the agent is waiting for input this chat cannot give it; the run was cancelled.";
+			let response =
+				"Error: the agent is waiting for input this chat cannot give it; the run was cancelled.";
+			await record("stuck", response, ref.runId);
+			return response;
 		}
 
 		// An unrecognized status is a newer platform, not an answer — keep
 		// waiting until the cap rather than guessing terminal.
 		if (Date.now() >= deadline) {
 			await cancelRun(config, ref.runId, fetcher);
-			return "Error: the agent is still working after thirty minutes; the run was cancelled. Ask again in a moment.";
+			let response =
+				"Error: the agent is still working; the run was cancelled. Ask again in a moment.";
+			await record("timeout", response, ref.runId);
+			return response;
 		}
 	}
 }

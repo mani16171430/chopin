@@ -19,6 +19,8 @@ import type {
 	RenameDocumentInput,
 } from "../mcp";
 import type { LifecycleArguments } from "./lifecycle";
+import { isRepositoryChannel } from "../storage/model";
+
 import type { ChannelArchiveResult, ChannelRecord, Lease } from "../storage/model";
 import type { ClaimResult, Run } from "../tasks/graphs";
 
@@ -172,6 +174,8 @@ export function hosted(
 		let id = legacy?.[1]?.toLowerCase();
 		let channel = await auth.storage.channels.get(id && isChannelId(id) ? id : locator);
 		if (!channel) return undefined;
+		// MCP operates on a repository's documents; a general document has none.
+		if (!isRepositoryChannel(channel)) return undefined;
 		let repository = await directRepository(
 			caller,
 			channel.repositoryOwner,

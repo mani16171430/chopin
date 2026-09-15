@@ -657,10 +657,10 @@ export class MemoryResearchWorkspaceStore implements ResearchWorkspaceStore {
 				}
 				let now = timestamp(input.now, "publication time");
 				let child = access.createAvailableChannel({
-					id: deterministicChannelId(currentParent.repositoryId, found.id),
-					repositoryId: currentParent.repositoryId,
-					repositoryOwner: currentParent.repositoryOwner,
-					repositoryName: currentParent.repositoryName,
+					id: deterministicChannelId(currentParent.repositoryId!, found.id),
+					repositoryId: currentParent.repositoryId!,
+					repositoryOwner: currentParent.repositoryOwner!,
+					repositoryName: currentParent.repositoryName!,
 					parentChannelId: currentParent.id,
 					title: input.title,
 					createdBy: found.createdBy,

@@ -18,6 +18,14 @@ type Tone = "muted" | "warn" | "error";
 function describe(
 	props: PlanStatusProps,
 ): { label: string; tone: Tone; level: Level; detail?: string } {
+	if (props.connection === "denied") {
+		return {
+			label: "Not connected",
+			tone: "error",
+			level: "notice",
+			detail: "Reload to sign in again.",
+		};
+	}
 	if (props.connection && props.connection !== "connected") {
 		return {
 			label: "Reconnecting",

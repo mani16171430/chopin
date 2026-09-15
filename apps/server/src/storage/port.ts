@@ -16,6 +16,7 @@ import type {
 	ChannelAgent,
 	ChannelArchiveInput,
 	ChannelArchiveResult,
+	ChannelInvite,
 	ChannelMcp,
 	ChannelMcpCredential,
 	ChannelPage,
@@ -29,6 +30,7 @@ import type {
 	ConfirmResearchWorkspace,
 	ConfirmResearchWorkspaceResult,
 	CreateChannel,
+	CreateChannelInvite,
 	CreateChannelMcp,
 	CreateResearchWorkspace,
 	CreateResearchWorkspaceResult,
@@ -114,7 +116,7 @@ export interface ChannelStore {
 	/** Creates a top-level channel or one repository-local, non-recursive child. */
 	create(input: CreateChannel): Promise<ChannelRecord>;
 	get(id: string): Promise<ChannelRecord | undefined>;
-	resolve(repositoryId: string, slug: string): Promise<ChannelRecord | undefined>;
+	resolve(repositoryId: string | null, slug: string): Promise<ChannelRecord | undefined>;
 	rename(channel: RenameChannel): Promise<RenameResult>;
 	archive(input: ChannelArchiveInput): Promise<ChannelArchiveResult>;
 	restore(input: ChannelArchiveInput): Promise<ChannelArchiveResult>;
@@ -145,6 +147,38 @@ export interface ChannelStore {
 	): Promise<boolean>;
 	updateAgentContext(context: UpdateAgentContext): Promise<AgentState>;
 	readAgent(channelId: string, now: Date): Promise<ChannelAgent | undefined>;
+}
+
+/**
+ * Invite links on general documents, and the members who joined by holding
+ * one. The store only ever sees the token's SHA-256; the raw bearer token
+ * never crosses this boundary.
+ */
+export interface ChannelInviteStore {
+	/** Revokes any live invite and mints a new one, atomically. */
+	mint(input: CreateChannelInvite): Promise<ChannelInvite>;
+	/** The live invite for a channel, if one exists. */
+	live(channelId: string): Promise<ChannelInvite | undefined>;
+	/** Resolve a presented token's hash to its invite, only while it is live. */
+	resolve(tokenHash: string): Promise<ChannelInvite | undefined>;
+	/**
+	 * Write a fresh token onto the live invite without revoking it. Self-heals a
+	 * row written before tokens were recoverable: the link changes (the hash and
+	 * envelope move together), membership and liveness are untouched. Returns the
+	 * updated invite, or undefined when the channel has no live invite.
+	 */
+	reseal(
+		channelId: string,
+		tokenHash: string,
+		tokenEnvelope: Uint8Array,
+	): Promise<ChannelInvite | undefined>;
+	revoke(id: string, now: Date): Promise<boolean>;
+	/** Record that a user joined a channel by holding the invite. Idempotent. */
+	join(member: { channelId: string; userId: string; inviteId: string; now: Date }): Promise<void>;
+	/** Whether a user currently holds membership in a channel. */
+	isMember(channelId: string, userId: string): Promise<boolean>;
+	/** The channels a user holds membership in (drives the General Documents list). */
+	channelsJoinedBy(userId: string): Promise<string[]>;
 }
 
 export interface CollaborationStore {
@@ -276,6 +310,7 @@ export interface StorageAdapter {
 	readonly research: ResearchWorkspaceStore;
 	readonly channelMcps: ChannelMcpStore;
 	readonly cadence: CadenceUpdateStore;
+	readonly invites: ChannelInviteStore;
 
 	migrate(): Promise<void>;
 	health(): Promise<void>;

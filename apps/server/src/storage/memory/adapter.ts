@@ -12,8 +12,10 @@ import type {
 	ChannelArchiveInput,
 	ChannelArchiveResult,
 	ChannelCursor,
+	ChannelInvite,
 	ChannelMcp,
 	ChannelMcpCredential,
+	ChannelMember,
 	ChannelPage,
 	ChannelRecord,
 	ChannelScanCursor,
@@ -43,6 +45,7 @@ import type {
 import type {
 	BackgroundJobStore,
 	CadenceUpdateStore,
+	ChannelInviteStore,
 	ChannelMcpStore,
 	ChannelStore,
 	CollaborationStore,
@@ -125,6 +128,15 @@ function lease(value: Lease): Lease {
 type Operation = CommitResult;
 
 /** A strict in-memory adapter used by domain tests, not a production fallback. */
+/**
+ * The Map key for a slug scope with no repository. Postgres uses a COALESCE
+ * index to the same effect; the empty string is a value no repository id can
+ * take, so general documents share one namespace and never collide with one.
+ */
+function slugScope(repositoryId: string | null): string {
+	return repositoryId ?? "";
+}
+
 export class MemoryStorage implements StorageAdapter {
 	readonly driver = "memory";
 
@@ -134,6 +146,8 @@ export class MemoryStorage implements StorageAdapter {
 	#navigation = new Map<string, UserNavigation>();
 	#channels = new Map<string, ChannelRecord>();
 	#channelSlugs = new Map<string, Map<string, string>>();
+	#invites = new Map<string, ChannelInvite>();
+	#members = new Map<string, ChannelMember>();
 	#snapshots = new Map<string, ChannelSnapshot>();
 	#sequences = new Map<string, number>();
 	#updates = new Map<string, ChannelUpdate[]>();
@@ -261,7 +275,7 @@ export class MemoryStorage implements StorageAdapter {
 		create: async input => this.#createChannel(input),
 		get: id => Promise.resolve(this.#channels.get(id)).then(value => value && channel(value)),
 		resolve: (repositoryId, slug) => {
-			let id = this.#channelSlugs.get(repositoryId)?.get(slug);
+			let id = this.#channelSlugs.get(slugScope(repositoryId))?.get(slug);
 			let found = id ? this.#channels.get(id) : undefined;
 			return Promise.resolve(found && channel(found));
 		},
@@ -287,6 +301,66 @@ export class MemoryStorage implements StorageAdapter {
 		commit: input => this.#commit(input),
 		replace: input => this.#replace(input),
 		checkpoint: input => this.#checkpoint(input),
+	};
+
+	readonly invites: ChannelInviteStore = {
+		mint: input => {
+			// One live invite per channel: revoke the current one, then mint.
+			// Revoking drops everyone who joined on the old link, so cutting off
+			// a link cuts off the people it let in; they re-join with the new one.
+			for (let invite of this.#invites.values()) {
+				if (invite.channelId === input.channelId && !invite.revokedAt) {
+					this.#invites.set(invite.id, { ...invite, revokedAt: input.now });
+					this.#dropMembersOnInvite(invite.id);
+				}
+			}
+			let saved: ChannelInvite = {
+				id: crypto.randomUUID(),
+				channelId: input.channelId,
+				tokenHash: input.tokenHash,
+				...(input.tokenEnvelope ? { tokenEnvelope: input.tokenEnvelope } : {}),
+				createdBy: input.createdBy,
+				createdAt: input.now,
+			};
+			this.#invites.set(saved.id, saved);
+			return Promise.resolve(saved);
+		},
+		live: channelId =>
+			Promise.resolve(
+				[...this.#invites.values()].find(i => i.channelId === channelId && !i.revokedAt),
+			),
+		resolve: tokenHash =>
+			Promise.resolve(
+				[...this.#invites.values()].find(i => i.tokenHash === tokenHash && !i.revokedAt),
+			),
+		reseal: (channelId, tokenHash, tokenEnvelope) => {
+			let found = [...this.#invites.values()].find(i => i.channelId === channelId && !i.revokedAt);
+			if (!found) return Promise.resolve(undefined);
+			let saved: ChannelInvite = { ...found, tokenHash, tokenEnvelope };
+			this.#invites.set(found.id, saved);
+			return Promise.resolve(saved);
+		},
+		revoke: (id, now) => {
+			let found = this.#invites.get(id);
+			if (!found || found.revokedAt) return Promise.resolve(false);
+			this.#invites.set(id, { ...found, revokedAt: now });
+			this.#dropMembersOnInvite(id);
+			return Promise.resolve(true);
+		},
+		join: member => {
+			this.#members.set(`${member.channelId}:${member.userId}`, {
+				channelId: member.channelId,
+				userId: member.userId,
+				inviteId: member.inviteId,
+				joinedAt: member.now,
+			});
+			return Promise.resolve();
+		},
+		isMember: (channelId, userId) => Promise.resolve(this.#members.has(`${channelId}:${userId}`)),
+		channelsJoinedBy: userId =>
+			Promise.resolve(
+				[...this.#members.values()].filter(m => m.userId === userId).map(m => m.channelId),
+			),
 	};
 
 	readonly #jobs = new MemoryBackgroundJobStore({
@@ -651,12 +725,12 @@ export class MemoryStorage implements StorageAdapter {
 		this.#sidecars.delete(id);
 		this.#operations.delete(id);
 		this.#agents.delete(id);
-		let aliases = this.#channelSlugs.get(found.repositoryId);
+		let aliases = this.#channelSlugs.get(slugScope(found.repositoryId));
 		if (aliases) {
 			for (let [slug, owner] of aliases) {
 				if (owner === id) aliases.delete(slug);
 			}
-			if (aliases.size === 0) this.#channelSlugs.delete(found.repositoryId);
+			if (aliases.size === 0) this.#channelSlugs.delete(slugScope(found.repositoryId));
 		}
 		for (let [userId, saved] of this.#navigation) {
 			if (saved.lastDocumentId === id) {
@@ -694,11 +768,18 @@ export class MemoryStorage implements StorageAdapter {
 		return Promise.resolve({ channel: channel(saved), changed: true });
 	}
 
-	#reserveSlug(repositoryId: string, channelId: string, title: string): string {
-		let aliases = this.#channelSlugs.get(repositoryId);
+	#dropMembersOnInvite(inviteId: string): void {
+		for (let [key, member] of this.#members) {
+			if (member.inviteId === inviteId) this.#members.delete(key);
+		}
+	}
+
+	#reserveSlug(repositoryId: string | null, channelId: string, title: string): string {
+		let scope = slugScope(repositoryId);
+		let aliases = this.#channelSlugs.get(scope);
 		if (!aliases) {
 			aliases = new Map();
-			this.#channelSlugs.set(repositoryId, aliases);
+			this.#channelSlugs.set(scope, aliases);
 		}
 		let base = documentSlug(title);
 		for (let index = 1;; index++) {

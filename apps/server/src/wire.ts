@@ -36,10 +36,11 @@ export type SocketData = Identity & {
 	sessionId: string;
 	authorizedUntil: number;
 	credential: string;
-	repositoryId: string;
-	repositoryOwner: string;
-	repositoryName: string;
-	repositoryDefaultBranch: string;
+	/** Null on a general document — one with no repository, authorized by invite. */
+	repositoryId: string | null;
+	repositoryOwner: string | null;
+	repositoryName: string | null;
+	repositoryDefaultBranch?: string;
 	accessCheckedAt: number;
 	authorizationTimer?: ReturnType<typeof setTimeout>;
 	authorizationRefresh?: Promise<AuthorizationResult>;

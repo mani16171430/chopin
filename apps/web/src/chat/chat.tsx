@@ -43,12 +43,16 @@ import type { Repository } from "../api";
 import type { ComposerDraft, ReferenceTarget } from "./references";
 import type { Wire as Socket } from "../wire";
 
+// Never searched: the picker's trigger stays undefined without a repository.
+const DISABLED_REFERENCE_REPOSITORY = Object.freeze({ id: "", name: "", owner: "" });
+
 export type ChatProps = {
 	wire: Socket | undefined;
 	handle: string;
 	connected: boolean;
 	referencesEnabled: boolean;
-	repository: Pick<Repository, "id" | "name" | "owner">;
+	/** Absent for a general document, where repository-scoped references are off. */
+	repository?: Pick<Repository, "id" | "name" | "owner">;
 	room: string;
 	sendAcknowledgements: boolean;
 	/** Hosted mode keeps the shared chat while repository-scoped agent work is disabled. */
@@ -114,11 +118,13 @@ export function Chat(
 		? detected
 		: undefined;
 	let triggerKey = trigger ? referenceTriggerKey(trigger) : undefined;
-	let pickerOpen = !submitting && trigger !== undefined && triggerKey !== dismissedPicker;
+	// A general document has no repository, so repository-scoped references stay off.
+	let pickerOpen = !!repository && !submitting && trigger !== undefined
+		&& triggerKey !== dismissedPicker;
 	let atReferenceLimit = draft.references.length >= MAX_REFERENCES;
 	let picker = useReferencePicker(
-		pickerOpen && !atReferenceLimit && referencesEnabled ? trigger : undefined,
-		repository,
+		repository && pickerOpen && !atReferenceLimit && referencesEnabled ? trigger : undefined,
+		repository ?? DISABLED_REFERENCE_REPOSITORY,
 		room,
 	);
 	let activeOption = picker.options.length === 0

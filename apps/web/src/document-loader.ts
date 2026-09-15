@@ -1,4 +1,8 @@
-import { childDocumentPath, documentPath } from "@chopin/protocol/document-url";
+import {
+	childDocumentPath,
+	documentPath,
+	generalDocumentPath,
+} from "@chopin/protocol/document-url";
 
 import * as Api from "./api";
 
@@ -10,6 +14,8 @@ type DocumentReaders = {
 		slug: string,
 		signal?: AbortSignal,
 	) => Promise<Api.ChannelDetail>;
+	/** A repo-less channel fetch: a general document answers it too. */
+	generalChannel: (id: string, signal?: AbortSignal) => Promise<Api.AnyChannelDetail>;
 };
 
 export function validatedChildPath(
@@ -48,9 +54,13 @@ export async function prepareDocumentLoad(
 		},
 	signal: AbortSignal,
 	readers: DocumentReaders = Api,
-): Promise<{ detail: Api.ChannelDetail; parent?: Api.ChannelDetail; pathname: string }> {
+): Promise<{ detail: Api.AnyChannelDetail; parent?: Api.ChannelDetail; pathname: string }> {
 	if ("id" in address) {
-		let detail = await readers.channel(address.id, signal);
+		let detail = await readers.generalChannel(address.id, signal);
+		// A general document has no repository; its canonical path is the slug.
+		if (!detail.repository) {
+			return { detail, pathname: generalDocumentPath(detail.channel.slug) };
+		}
 		if (!detail.channel.parentChannelId) {
 			return {
 				detail,

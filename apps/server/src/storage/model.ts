@@ -49,7 +49,7 @@ export type UserNavigation = {
 export type UserNavigationSnapshot = {
 	projects: UserProject[];
 	navigation: UserNavigation | undefined;
-	lastDocumentRepositoryId: string | undefined;
+	lastDocumentRepositoryId: string | null | undefined;
 };
 
 export type CompareNavigationResult = {
@@ -79,9 +79,14 @@ export type ChannelDescription = {
 
 export type ChannelRecord = {
 	id: string;
-	repositoryId: string;
-	repositoryOwner: string;
-	repositoryName: string;
+	/**
+	 * Null on a general document — one with no repository until it is moved
+	 * under one. The null is the marker: authorization switches from the
+	 * repository role to a held invite link.
+	 */
+	repositoryId: string | null;
+	repositoryOwner: string | null;
+	repositoryName: string | null;
 	parentChannelId?: string;
 	title: string;
 	slug: string;
@@ -91,6 +96,58 @@ export type ChannelRecord = {
 	updatedAt: Date;
 	archivedAt?: Date;
 	description?: ChannelDescription;
+};
+
+/** A channel whose repository is set — the common case; null only on a general document. */
+export type RepositoryChannel = ChannelRecord & {
+	repositoryId: string;
+	repositoryOwner: string;
+	repositoryName: string;
+};
+
+/**
+ * Narrow a channel to one with a repository. Code that operates on a channel's
+ * repo — the repository-scoped routes, the Planner's repository tools, research
+ * publication — requires one; a general document has none until it is moved.
+ */
+export function isRepositoryChannel(channel: ChannelRecord): channel is RepositoryChannel {
+	return channel.repositoryId !== null;
+}
+
+/**
+ * An invite link to a general document. Only the token's SHA-256 is stored;
+ * the raw token is handed out once, in the join URL. A channel has at most one
+ * live invite — rotating revokes the old row and mints a new one.
+ */
+export type ChannelInvite = {
+	id: string;
+	channelId: string;
+	tokenHash: string;
+	/**
+	 * The token sealed (AES-256-GCM) under the deployment key, as opaque bytes.
+	 * Present so a member can read the live link back; the hash stays the join
+	 * lookup. Absent only on rows written before recovery was added.
+	 */
+	tokenEnvelope?: Uint8Array;
+	createdBy: string;
+	createdAt: Date;
+	revokedAt?: Date;
+};
+
+export type CreateChannelInvite = {
+	channelId: string;
+	tokenHash: string;
+	tokenEnvelope?: Uint8Array;
+	createdBy: string;
+	now: Date;
+};
+
+/** A user who joined a general document by holding its invite. */
+export type ChannelMember = {
+	channelId: string;
+	userId: string;
+	inviteId: string;
+	joinedAt: Date;
 };
 
 export type InitialChannel = Omit<

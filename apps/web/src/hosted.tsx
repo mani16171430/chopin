@@ -2,13 +2,17 @@ import { lazy, Suspense, useCallback, useEffect, useReducer, useRef, useState } 
 import { ContentSwapLayer } from "@chopin/editor/content-swap";
 import {
 	documentsPath,
+	generalDocumentPath,
 	parseChildDocumentPath,
 	parseDocumentPath,
+	parseGeneralDocumentPath,
 } from "@chopin/protocol/document-url";
 
 import * as Api from "./api";
 import { childFocusTransition } from "./anchored-child-surface";
 import { readChannelRecovery, rememberChannel } from "./channel-recovery";
+import { readGeneralChannelRecovery, rememberGeneralChannel } from "./general-recovery";
+import { InviteLinkCard } from "./invite-link";
 import { childCloseAction, childHistoryState } from "./child-history";
 import { documentRouteIdentity, transitionDocumentRoute } from "./document-route-swap";
 import { newestDocument } from "./document-actions";
@@ -27,6 +31,7 @@ import type {
 import type { WorkspacePresentation } from "./workspace-model";
 
 let DocumentWorkspaceHost = lazy(() => import("./document-workspace-host"));
+let GeneralWorkspaceHost = lazy(() => import("./general-workspace-host"));
 
 export type HostedWorkspaceProps = {
 	room: string;
@@ -36,7 +41,10 @@ export type HostedWorkspaceProps = {
 	updatedAt: string;
 	descriptionRevision: number;
 	description?: string;
-	repository: Api.Repository;
+	/** Absent for a general document, which has no repository. */
+	repository?: Api.Repository;
+	/** Extra chrome a host renders into the workspace header (e.g. an invite link). */
+	headerAction?: ReactNode;
 	canEdit: boolean;
 	canManage: boolean;
 	archivedAt?: string;
@@ -113,6 +121,13 @@ function decoded(value: string): string | undefined {
 
 export function hostedRoute(pathname: string): HostedRoute {
 	if (pathname === "/" || pathname === "") return { page: "repositories" };
+	// An invite link joins its general document on the server, which redirects
+	// into the document; a plain anchor keeps fetch from swallowing the 302.
+	let join = /^\/join\/([A-Za-z0-9_-]{16,})\/?$/.exec(pathname);
+	if (join) location.reload();
+	// /documents/general/:slug is a general document, not a "general" repository.
+	let general = parseGeneralDocumentPath(pathname);
+	if (general) return { page: "general", ...general };
 	let child = parseChildDocumentPath(pathname);
 	if (child) return { page: "child", ...child };
 	let document = parseDocumentPath(pathname);
@@ -256,7 +271,7 @@ function ChannelWorkspace(
 	},
 ) {
 	type LoadedWorkspace = {
-		detail: Api.ChannelDetail;
+		detail: Api.AnyChannelDetail;
 		Workspace: ComponentType<HostedWorkspaceProps>;
 	};
 	let [loaded, setLoaded] = useState<LoadedWorkspace>();
@@ -264,7 +279,8 @@ function ChannelWorkspace(
 	let [retry, setRetry] = useState(0);
 	let { channel: navigationChannel } = useNavigationDocument();
 	let routeKey = documentRouteIdentity(source);
-	let recovery = readChannelRecovery(user.id, source.id);
+	let repositoryRecovery = readChannelRecovery(user.id, source.id);
+	let generalRecovery = readGeneralChannelRecovery(user.id, source.id);
 
 	useEffect(() => {
 		let active = true;
@@ -276,7 +292,11 @@ function ChannelWorkspace(
 		).then(({ detail, pathname }) => ({ canonicalPath: pathname, detail }));
 		prepared = prepared.then(resolved => {
 			if (active) {
-				rememberChannel(user.id, resolved.detail.channel, resolved.detail.repository);
+				if (resolved.detail.repository) {
+					rememberChannel(user.id, resolved.detail.channel, resolved.detail.repository);
+				} else {
+					rememberGeneralChannel(user.id, resolved.detail.channel);
+				}
 			}
 			return resolved;
 		});
@@ -306,7 +326,7 @@ function ChannelWorkspace(
 	if (error) {
 		return (
 			<Failure
-				channel={recovery?.channel}
+				channel={repositoryRecovery?.channel ?? generalRecovery?.channel}
 				error={error}
 				onRetry={retryableChannelFailure(error)
 					? () => {
@@ -314,12 +334,14 @@ function ChannelWorkspace(
 						setRetry(value => value + 1);
 					}
 					: undefined}
-				repository={recovery?.repository}
+				repository={repositoryRecovery?.repository}
 			/>
 		);
 	}
 	if (!loaded) return <Loading label="Opening channel..." />;
 	let { detail } = loaded;
+	// A general document (no repository) still renders the document workspace.
+	let general = detail.repository ? undefined : detail.channel;
 	let channel = navigationChannel?.id === detail.channel.id
 		? newestDocument(detail.channel, navigationChannel)
 		: detail.channel;
@@ -338,6 +360,21 @@ function ChannelWorkspace(
 		repository: detail.repository,
 		room: detail.channel.id,
 		userId: user.id,
+		...(general
+			? {
+				headerAction: <InviteLinkCard channelId={channel.id} />,
+				onMetadataChanged: metadata => {
+					let pathname = generalDocumentPath(metadata.slug);
+					if (location.pathname !== pathname) {
+						history.replaceState(
+							history.state,
+							"",
+							`${pathname}${location.search}${location.hash}`,
+						);
+					}
+				},
+			}
+			: {}),
 	};
 	let Document = loaded.Workspace;
 	return <Document {...props} />;
@@ -424,7 +461,21 @@ function DocumentRouteSwap(
 							? () => dispatch({ key: layer.key, type: "closed" })
 							: undefined}
 					>
-						{source.page === "document" || source.page === "child"
+						{source.page === "general"
+							? (
+								<Suspense fallback={<Loading label="Opening document..." />}>
+									<GeneralWorkspaceHost
+										address={{ slug: source.slug }}
+										agent={agent}
+										Failure={Failure}
+										Loading={Loading}
+										onReady={ready}
+										routeKey={layer.routeKey}
+										user={user}
+									/>
+								</Suspense>
+							)
+							: source.page === "document" || source.page === "child"
 							? (
 								<Suspense fallback={<Loading label="Opening document..." />}>
 									<DocumentWorkspaceHost
@@ -615,6 +666,7 @@ export function HostedApp(
 		case "document":
 		case "child":
 		case "channel":
+		case "general":
 			workspace = (
 				<DocumentRouteSwap
 					agent={agent}

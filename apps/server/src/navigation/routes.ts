@@ -5,6 +5,8 @@ import type { HostedAuth } from "../auth/routes";
 import type { AuthenticatedSession } from "../auth/session";
 import type { Repository } from "../github/client";
 import type { Router } from "../http/router";
+import { isRepositoryChannel } from "../storage/model";
+
 import type { UserProject } from "../storage/model";
 import type { StorageAdapter } from "../storage/port";
 
@@ -231,6 +233,14 @@ export function registerNavigationRoutes(
 			}
 			let channel = await storage.channels.get(documentId);
 			if (!channel) return json({ error: "document not found" }, 404);
+			// A general document has no repository project to upsert; a member's visit
+			// just updates their last-opened document.
+			if (!isRepositoryChannel(channel)) {
+				let member = await storage.invites.isMember(channel.id, session.user.id);
+				if (!member) return json({ error: "document not found" }, 404);
+				await storage.navigation.setLastDocument(session.user.id, channel.id, auth.clock());
+				return empty(204);
+			}
 			let project = {
 				repositoryId: channel.repositoryId,
 				repositoryOwner: channel.repositoryOwner,

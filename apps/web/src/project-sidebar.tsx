@@ -8,10 +8,14 @@ import { motionContract } from "./motion-contract";
 import { motionImmediately } from "./motion-input";
 import { canManageProject } from "./navigation-model";
 import { MotionDisclosure, MotionDisclosureIcon } from "@chopin/editor";
-import { childDocumentPath, documentPath } from "@chopin/protocol/document-url";
+import {
+	childDocumentPath,
+	documentPath,
+	generalDocumentPath,
+} from "@chopin/protocol/document-url";
 
 import { useId, useRef, useState } from "react";
-import { ArchiveIcon, ChevronIcon, DocumentIcon, SearchIcon } from "@chopin/icons";
+import { ArchiveIcon, ChevronIcon, DocumentIcon, LinkPlusIcon, SearchIcon } from "@chopin/icons";
 import type * as Api from "./api";
 import type { DocumentAction } from "./document-actions-menu";
 import type { ProjectDocuments } from "./document-actions";
@@ -38,12 +42,16 @@ export function documentGroups(
 	archiveMode: boolean,
 ): Array<{ parent: Api.Channel; children: Api.Channel[] }> {
 	let parents = channels.filter(channel =>
-		channel.parentChannelId === undefined
+		// A general document never appears in a project catalogue.
+		channel.repositoryOwner !== null
+		&& channel.repositoryName !== null
+		&& channel.parentChannelId === undefined
 		&& (archiveMode ? channel.archivedAt !== undefined : channel.archivedAt === undefined)
 	);
 	let parentIds = new Set(parents.map(channel => channel.id));
 	let children = new Map<string, Api.Channel[]>();
 	for (let channel of channels) {
+		if (!channel.repositoryOwner || !channel.repositoryName) continue;
 		if (!channel.parentChannelId || !parentIds.has(channel.parentChannelId)) continue;
 		let nested = children.get(channel.parentChannelId) ?? [];
 		nested.push(channel);
@@ -98,9 +106,10 @@ function Project(
 					{groups.map(({ children, parent: channel }) => {
 						let parentCurrent = currentDocumentId === channel.id;
 						let childCurrent = children.some(child => child.id === currentDocumentId);
+						// documentGroups already filtered general documents out.
 						let parentHref = documentPath(
-							channel.repositoryOwner,
-							channel.repositoryName,
+							channel.repositoryOwner as string,
+							channel.repositoryName as string,
 							channel.slug,
 						);
 						return (
@@ -156,8 +165,8 @@ function Project(
 														aria-current={current ? "page" : undefined}
 														className="project-sidebar-child-link"
 														href={childDocumentPath(
-															channel.repositoryOwner,
-															channel.repositoryName,
+															channel.repositoryOwner as string,
+															channel.repositoryName as string,
 															channel.slug,
 															child.slug,
 														)}
@@ -257,6 +266,7 @@ export function ProjectSidebar(
 		accountMenu,
 		accountMenuOpen,
 		canCreateDocument,
+		creatingGeneralDocument = false,
 		creatingNewDocument,
 		creatingProjectIds,
 		currentDocumentId,
@@ -264,6 +274,7 @@ export function ProjectSidebar(
 		onAddProject,
 		onCollapse,
 		onCreateDocument,
+		onCreateGeneralDocument,
 		onDocumentAction,
 		onLoadMore,
 		onNewDocument,
@@ -271,12 +282,14 @@ export function ProjectSidebar(
 		onCatalogueModeChange,
 		projects,
 		catalogueMode,
+		generalDocuments = [],
 		user,
 	}: {
 		accountMenu?: ReactNode;
 		accountMenuOpen?: boolean;
 		canCreateDocument: boolean;
 		catalogueMode: "active" | "archived";
+		creatingGeneralDocument?: boolean;
 		creatingNewDocument: boolean;
 		creatingProjectIds: ReadonlySet<string>;
 		currentDocumentId?: string;
@@ -284,12 +297,15 @@ export function ProjectSidebar(
 		onAddProject: () => void;
 		onCollapse: () => void;
 		onCreateDocument: (project: Api.NavigationProject) => void;
+		onCreateGeneralDocument?: () => void;
 		onDocumentAction: (channel: Api.Channel, action: DocumentAction) => void;
 		onLoadMore: (entry: ProjectDocuments) => void;
 		onNewDocument: () => void;
 		onSearch: () => void;
 		onCatalogueModeChange: (mode: "active" | "archived") => void;
 		projects: ProjectDocuments[];
+		/** General documents the user has joined, listed under their own heading. */
+		generalDocuments?: Api.Channel[];
 		user: Api.User;
 	},
 ) {
@@ -327,6 +343,17 @@ export function ProjectSidebar(
 							<NavigationIcon src={newDocumentIcon} />
 							<span>New document</span>
 						</button>
+						{onCreateGeneralDocument && (
+							<button
+								className="project-sidebar-primary-action"
+								disabled={creatingGeneralDocument}
+								onClick={onCreateGeneralDocument}
+								type="button"
+							>
+								<LinkPlusIcon />
+								<span>New general document</span>
+							</button>
+						)}
 						<button
 							className="project-sidebar-primary-action"
 							onClick={onSearch}
@@ -412,6 +439,50 @@ export function ProjectSidebar(
 							))}
 					</ul>
 				</nav>
+
+				{generalDocuments.length > 0 && (
+					<nav aria-label="General Documents" className="px-2 py-2">
+						<div className="project-sidebar-projects-heading">
+							<span>General Documents</span>
+						</div>
+						<ul className="project-sidebar-documents">
+							{generalDocuments.map(channel => (
+								<li className="group/document" key={channel.id}>
+									<div
+										className={`project-sidebar-document ${
+											currentDocumentId === channel.id ? "project-sidebar-document-current" : ""
+										}`}
+									>
+										<a
+											aria-current={currentDocumentId === channel.id ? "page" : undefined}
+											className="project-sidebar-document-link min-w-0 flex-1 text-left text-sm font-medium"
+											href={generalDocumentPath(channel.slug)}
+										>
+											<span className="min-w-0 flex-1">
+												<span className="block truncate">{channel.title}</span>
+												{channel.description && (
+													<span className="block truncate font-normal text-text-quaternary">
+														{channel.description}
+													</span>
+												)}
+											</span>
+										</a>
+										<div className="project-sidebar-document-actions">
+											<DocumentActionsMenu
+												channel={channel}
+												className="project-sidebar-document-action"
+												onAction={action => onDocumentAction(channel, action)}
+												trigger={
+													<NavigationIcon className="h-auto w-3.5" src={documentActionsIcon} />
+												}
+											/>
+										</div>
+									</div>
+								</li>
+							))}
+						</ul>
+					</nav>
+				)}
 			</div>
 			{archiveFooter}
 			<div className="project-sidebar-account-wrap">

@@ -1,3 +1,5 @@
+import { isRepositoryChannel } from "../storage/model";
+
 import type { HostedAuth } from "../auth/routes";
 import type { HostedRepository } from "./repository";
 
@@ -55,7 +57,11 @@ export class ActiveOwnerBindings {
 		let now = this.#auth.clock();
 		let stored = await this.#auth.storage.channels.readAgent(channelId, now);
 		let ownerSessionId = stored?.agent?.ownerSessionId;
-		if (!stored || !ownerSessionId || this.#revokedSessions.has(ownerSessionId)) return undefined;
+		// A durable owner exists only under a repository; a general document has none.
+		if (
+			!stored || !ownerSessionId || !isRepositoryChannel(stored.channel)
+			|| this.#revokedSessions.has(ownerSessionId)
+		) return undefined;
 		let ownerGeneration = stored.agent!.generation;
 		let owner = await this.#auth.sessions.resolve(ownerSessionId);
 		if (!owner || this.#revokedSessions.has(ownerSessionId)) return undefined;
@@ -64,8 +70,8 @@ export class ActiveOwnerBindings {
 			token =>
 				this.#auth.github.repositoryAccess(
 					token,
-					stored.channel.repositoryOwner,
-					stored.channel.repositoryName,
+					stored.channel.repositoryOwner!,
+					stored.channel.repositoryName!,
 				),
 		);
 		owner = checked.authenticated;

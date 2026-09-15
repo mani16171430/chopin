@@ -420,8 +420,8 @@ describe("chat reference requests", () => {
 			requests: [documentRequest(child.id, 0, 7)],
 		});
 		let href = childDocumentPath(
-			parent.repositoryOwner,
-			parent.repositoryName,
+			parent.repositoryOwner!,
+			parent.repositoryName!,
 			parent.slug,
 			child.slug,
 		);
@@ -515,8 +515,8 @@ describe("reading cached reference targets", () => {
 			parentChannelId: parent.id,
 			label: "%Release Research",
 			href: researchReferencePath(
-				parent.repositoryOwner,
-				parent.repositoryName,
+				parent.repositoryOwner!,
+				parent.repositoryName!,
 				parent.slug,
 				workspace.workspace.id,
 			),

@@ -156,7 +156,8 @@ export default function DocumentWorkspaceHost(
 					slug: requestedRoute.parentSlug,
 				}, controller.signal);
 				if (!active) return;
-				let parent = prepared.parent ?? prepared.detail;
+				// A repository child route only ever resolves to a repository channel.
+				let parent = (prepared.parent ?? prepared.detail) as Api.ChannelDetail;
 				rememberChannel(user.id, parent.channel, parent.repository);
 				send({ parent, route: requestedRoute, type: "parent-ready" });
 			}
@@ -166,26 +167,38 @@ export default function DocumentWorkspaceHost(
 			if (!active) return;
 			let parent = prepared.parent ?? prepared.detail;
 			let child = prepared.parent ? prepared.detail : undefined;
-			rememberChannel(user.id, parent.channel, parent.repository);
-			if (child) rememberChannel(user.id, child.channel, child.repository);
-			send({ child, parent, route: requestedRoute, type: "ready" });
-			let routeKey = child
+			// A repository route only ever resolves to repository channels — a
+			// general document answers by channel id, which this host never passes.
+			if (!parent.repository || (child && !child.repository)) return;
+			let repositoryParent = parent as Api.ChannelDetail;
+			let repositoryChild = child as Api.ChannelDetail | undefined;
+			rememberChannel(user.id, repositoryParent.channel, repositoryParent.repository);
+			if (repositoryChild) {
+				rememberChannel(user.id, repositoryChild.channel, repositoryChild.repository);
+			}
+			send({
+				child: repositoryChild,
+				parent: repositoryParent,
+				route: requestedRoute,
+				type: "ready",
+			});
+			let routeKey = repositoryChild
 				? documentRouteIdentity({
-					childSlug: child.channel.slug,
-					owner: child.repository.owner,
+					childSlug: repositoryChild.channel.slug,
+					owner: repositoryChild.repository.owner,
 					page: "child",
-					parentSlug: parent.channel.slug,
-					repository: child.repository.name,
+					parentSlug: repositoryParent.channel.slug,
+					repository: repositoryChild.repository.name,
 				})
 				: documentRouteIdentity({
-					owner: parent.repository.owner,
+					owner: repositoryParent.repository.owner,
 					page: "document",
-					repository: parent.repository.name,
-					slug: parent.channel.slug,
+					repository: repositoryParent.repository.name,
+					slug: repositoryParent.channel.slug,
 				});
 			onReady(layerKey, {
 				canonicalPath: prepared.pathname,
-				channel: (child ?? parent).channel,
+				channel: (repositoryChild ?? repositoryParent).channel,
 				routeKey,
 			});
 		}, reason => {

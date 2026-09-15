@@ -131,6 +131,8 @@ export function replaceLoadedDocument(
 	documents: LoadedDocuments,
 	replacement: Api.Channel,
 ): LoadedDocuments {
+	// A general document has no project catalogue to be replaced in.
+	if (!replacement.repositoryId) return documents;
 	let current = documents[replacement.repositoryId];
 	if (!current) {
 		return {

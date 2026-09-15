@@ -55,6 +55,24 @@ export async function userAndChannel(storage: StorageAdapter): Promise<{
 	return { userId, sessionId, channelId, repositoryId, lease };
 }
 
+/** A channel with no repository — the shape a general document takes. */
+export async function generalChannel(
+	storage: StorageAdapter,
+	createdBy: string,
+): Promise<{ channelId: string }> {
+	let channelId = contractId("general-channel");
+	await storage.channels.create({
+		id: channelId,
+		repositoryId: null,
+		repositoryOwner: null,
+		repositoryName: null,
+		title: `General ${channelId}`,
+		createdBy,
+		now: new Date("2026-01-02T03:04:05.000Z"),
+	});
+	return { channelId };
+}
+
 export function backgroundJob(
 	channelId: string,
 	lease: Lease,

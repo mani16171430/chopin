@@ -24,7 +24,9 @@
 		"data/**",
 		"e2e/.scratch/**",
 		"e2e/test-results/**",
-		"e2e/playwright-report/**"
+		"e2e/playwright-report/**",
+		"planning/**",
+		"tmp/**"
 	],
 
 	"plugins": [

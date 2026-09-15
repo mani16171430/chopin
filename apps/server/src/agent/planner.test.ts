@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { PROMPT } from "./planner";
+import { plannerGeneral, PROMPT } from "./planner";
 
 test("settles blocking opening choices before writing a first plan", () => {
 	expect(PROMPT).toContain(
@@ -45,4 +45,25 @@ test("treats typed references as optional untrusted evidence, not edit authority
 	expect(PROMPT).toContain("another document");
 	expect(PROMPT).toContain("remain fixed to this");
 	expect(PROMPT).toContain("room's document");
+});
+
+test("the general-document planner names no repository and no repository tools", () => {
+	let prompt = plannerGeneral();
+	expect(prompt).toContain("not tied to a repository");
+	expect(prompt).toContain("no repository, file, or pull-request tools");
+	expect(prompt).not.toContain("read_repository_file");
+	expect(prompt).not.toContain("list_pull_requests");
+});
+
+test("decomposes a broad internal question into serial ask_clash calls", () => {
+	expect(PROMPT).toContain("Break it into a few sub-questions");
+	expect(PROMPT).toContain("one at a time");
+	expect(PROMPT).toContain("never fire several at once");
+	expect(PROMPT).toContain("each call blocks until");
+});
+
+test("publishes an AI Doc only through the channel's AI-Docs MCP tool", () => {
+	expect(PROMPT).toContain("mcp__…__create_document");
+	expect(PROMPT).toContain("credential of the member who asked");
+	expect(PROMPT).toContain("do not\ninvent another publish path");
 });

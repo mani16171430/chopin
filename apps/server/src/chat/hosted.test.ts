@@ -125,6 +125,72 @@ describe("hosted Copilot ownership", () => {
 		expect(replacement.owner.access.token).toBe("ghu_bob");
 	});
 
+	it("resolves a general document's owner by membership, not repository access", async () => {
+		let now = new Date("2026-08-13T12:00:00.000Z");
+		let storage = new MemoryStorage();
+		let key = new Uint8Array(32).fill(9);
+		for (let [id, login] of [["U_ana", "ana"], ["U_bob", "bob"]]) {
+			await storage.users.put({ id, login, avatarUrl: "", now });
+		}
+		let sessions = new Sessions(storage, true, () => now);
+		let ana = await sessions.issue("U_ana", grant("ghu_ana"));
+		// A general document: no repository.
+		let channel = await storage.channels.create({
+			id: crypto.randomUUID(),
+			repositoryId: null,
+			repositoryOwner: null,
+			repositoryName: null,
+			title: "Shared plan",
+			createdBy: "U_ana",
+			now,
+		});
+		let invite = await storage.invites.mint({
+			channelId: channel.id,
+			tokenHash: "hash",
+			createdBy: "U_ana",
+			now,
+		});
+		await storage.invites.join({
+			channelId: channel.id,
+			userId: "U_ana",
+			inviteId: invite.id,
+			now,
+		});
+		let config = {
+			origin: "https://test",
+			appSlug: "chopin-test",
+			clientId: "id",
+			clientSecret: "secret",
+			encryptionKey: key,
+		};
+		let github = new GitHubAccess();
+		let auth: HostedAuth = {
+			config,
+			storage,
+			github,
+			admission: new Admission(config, github, () => now.getTime()),
+			sessions,
+			clock: () => now,
+		};
+
+		// A member resolves as owner without any repository access check.
+		let resolved = await resolveOwner(auth, null, channel.id, ana.id);
+		expect(resolved.ownership.ownerSessionId).toBe(ana.id);
+		expect(resolved.repository).toBeNull();
+
+		// Once the owner is flushed from the document (an invite rotate drops
+		// everyone it let in), the Planner can no longer resolve them.
+		await storage.invites.mint({
+			channelId: channel.id,
+			tokenHash: "hash-2",
+			createdBy: "U_ana",
+			now,
+		});
+		await expect(resolveOwner(auth, null, channel.id, ana.id)).rejects.toThrow(
+			"no longer a member",
+		);
+	});
+
 	it("invalidates only the agent bound to the rotating credential revision", async () => {
 		let chat = create();
 		let aborted = 0;

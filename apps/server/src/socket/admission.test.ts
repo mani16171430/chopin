@@ -194,4 +194,84 @@ describe("socket admission", () => {
 			reason: "repository access is temporarily unavailable",
 		});
 	});
+
+	it("admits a general document on held membership, never consulting GitHub", async () => {
+		let now = new Date("2026-08-13T12:00:00.000Z");
+		let storage = new MemoryStorage();
+		await storage.users.put({ id: "U_octocat", login: "octocat", avatarUrl: "avatar", now });
+		await storage.users.put({ id: "U_intruder", login: "intruder", avatarUrl: "", now });
+		let sessions = new Sessions(storage, true, () => now);
+		let issued = await sessions.issue("U_octocat", grant("ghu_user"));
+		let channel = await storage.channels.create({
+			id: crypto.randomUUID(),
+			repositoryId: null,
+			repositoryOwner: null,
+			repositoryName: null,
+			title: "Loose notes",
+			createdBy: "U_octocat",
+			now,
+		});
+		let invite = await storage.invites.mint({
+			channelId: channel.id,
+			tokenHash: "hash",
+			createdBy: "U_octocat",
+			now,
+		});
+		await storage.invites.join({
+			channelId: channel.id,
+			userId: "U_octocat",
+			inviteId: invite.id,
+			now,
+		});
+		let config = {
+			origin: "https://chopin.test",
+			appSlug: "chopin-test",
+			clientId: "client",
+			clientSecret: "secret",
+			encryptionKey: new Uint8Array(32).fill(2),
+		};
+		let auth: HostedAuth = {
+			config,
+			storage,
+			github: new FakeGitHub(),
+			admission: new Admission(config, new FakeGitHub(), () => now.getTime()),
+			sessions,
+			clock: () => now,
+		};
+		let url = new URL(`https://chopin.test/ws?channel=${channel.id}`);
+		let request = new Request(url, {
+			headers: { cookie: pair(issued.cookie), origin: "https://chopin.test" },
+		});
+		let admitted = await admit(request, url, auth);
+		expect("data" in admitted && admitted.data).toMatchObject({
+			room: channel.id,
+			channelTitle: "Loose notes",
+			canEdit: true,
+			canManage: true,
+			repositoryId: null,
+			repositoryOwner: null,
+			repositoryName: null,
+		});
+		if ("data" in admitted) {
+			expect(admitted.data).not.toHaveProperty("repositoryDefaultBranch");
+		}
+
+		let intruder = await sessions.issue("U_intruder", grant("ghu_intruder"));
+		let intruderRequest = new Request(url, {
+			headers: { cookie: pair(intruder.cookie), origin: "https://chopin.test" },
+		});
+		expect(await admit(intruderRequest, url, auth)).toEqual({
+			status: 404,
+			reason: "channel not found",
+		});
+
+		let archivedAt = new Date(now.getTime() + 1_000);
+		await storage.channels.archive({ id: channel.id, now: archivedAt });
+		let archived = await admit(request, url, auth);
+		expect("data" in archived && archived.data).toMatchObject({
+			canEdit: false,
+			canManage: false,
+			channelArchivedAt: archivedAt.toISOString(),
+		});
+	});
 });

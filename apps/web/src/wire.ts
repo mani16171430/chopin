@@ -40,6 +40,8 @@ type Refusal = { reason: string; authentication: boolean };
 
 const BASE_DELAY = 500;
 const MAX_DELAY = 15_000;
+/** Retries without a refusal before the server is called unreachable. */
+const UNREACHABLE_AFTER = 4;
 
 function endpoint(options: WireOptions): string {
 	let url = new URL("/ws", location.href);
@@ -164,6 +166,16 @@ export class Wire {
 		if (refusal) {
 			if (refusal.authentication) this.#options.onAuthenticationRequired?.();
 			return this.#set("denied", refusal.reason);
+		}
+
+		/*
+		 * A refused connection names its reason; an unreachable one does not. After
+		 * a few silent retries the server is down, not slow — say so, or the room
+		 * reads "Reconnecting" forever and a dead process looks like a hang.
+		 */
+		if (this.#attempts >= UNREACHABLE_AFTER) {
+			this.#set("denied", "The server is unreachable — it may need a restart.");
+			return;
 		}
 
 		let delay = Math.min(BASE_DELAY * 2 ** this.#attempts, MAX_DELAY) * (0.5 + Math.random());

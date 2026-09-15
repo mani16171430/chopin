@@ -107,6 +107,19 @@ describe("hosted routes", () => {
 			.toEqual({ page: "missing" });
 	});
 
+	it("recognizes a general document route as repo-less", () => {
+		expect(hostedRoute("/documents/general/release-plan")).toEqual({
+			page: "general",
+			slug: "release-plan",
+		});
+		expect(hostedRoute("/documents/general/r%C3%A9sum%C3%A9-%E8%A8%88%E7%94%BB"))
+			.toEqual({
+				page: "general",
+				slug: "résumé-計画",
+			});
+		expect(hostedRoute("/documents/general")).toEqual({ page: "missing" });
+	});
+
 	it("recognizes a child route before the ordinary document route", () => {
 		expect(hostedRoute(
 			"/documents/octo-org/score/release-plan/children/source%20review",
@@ -499,6 +512,11 @@ describe("channel recovery", () => {
 				if (slug === child.channel.slug) return child;
 				throw new ApiError("channel not found", 404);
 			},
+			async generalChannel(id: string) {
+				if (id === child.channel.id) return child;
+				if (id === parent.channel.id) return parent;
+				throw new ApiError("channel not found", 404);
+			},
 		};
 		let signal = new AbortController().signal;
 
@@ -533,6 +551,9 @@ describe("channel recovery", () => {
 			async document() {
 				return topLevel;
 			},
+			async generalChannel() {
+				return topLevel;
+			},
 		};
 		let signal = new AbortController().signal;
 		let expected = {
@@ -555,6 +576,37 @@ describe("channel recovery", () => {
 		).toEqual(expected);
 	});
 
+	it("resolves a general document by channel id to its general path", async () => {
+		let general = detail("general-one", "launch-brief");
+		let repoless = {
+			canEdit: true,
+			canManage: true,
+			channel: {
+				...general.channel,
+				repositoryId: null,
+				repositoryOwner: null,
+				repositoryName: null,
+			},
+		};
+		let readers = {
+			async channel(): Promise<ChannelDetail> {
+				throw new ApiError("channel not found", 404);
+			},
+			async document(): Promise<ChannelDetail> {
+				throw new ApiError("channel not found", 404);
+			},
+			async generalChannel() {
+				return repoless;
+			},
+		};
+		let signal = new AbortController().signal;
+
+		expect(await prepareDocumentLoad({ id: "general-one" }, signal, readers)).toEqual({
+			detail: repoless,
+			pathname: "/documents/general/launch-brief",
+		});
+	});
+
 	it("fails conservatively when authoritative parent resolution is missing or mismatched", async () => {
 		let parent = detail("parent-one", "release-plan");
 		let child = detail("child-one", "source-review", parent.channel.id);
@@ -569,6 +621,9 @@ describe("channel recovery", () => {
 					throw new ApiError("channel not found", 404);
 				},
 				document,
+				generalChannel: async () => {
+					throw new ApiError("channel not found", 404);
+				},
 			},
 		)).rejects.toMatchObject({ status: 404 });
 		await expect(prepareDocumentLoad(
@@ -577,6 +632,7 @@ describe("channel recovery", () => {
 			{
 				channel: async () => detail("different-parent", "release-plan"),
 				document,
+				generalChannel: async () => detail("different-parent", "release-plan"),
 			},
 		)).rejects.toMatchObject({ status: 404 });
 	});
@@ -594,6 +650,12 @@ describe("channel recovery", () => {
 			},
 			async document() {
 				return child;
+			},
+			async generalChannel(_id: string, signal?: AbortSignal): Promise<ChannelDetail> {
+				if (signal?.aborted) throw new Error("stale load aborted");
+				return new Promise((_resolve, reject) => {
+					signal?.addEventListener("abort", () => reject(new Error("stale load aborted")));
+				});
 			},
 		};
 		let pending = prepareDocumentLoad(

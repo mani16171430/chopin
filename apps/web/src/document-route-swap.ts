@@ -12,6 +12,7 @@ export type DocumentRouteIdentity = string & {
 
 export type DocumentRouteIdentitySource =
 	| { id: string; page: "channel" }
+	| { page: "general"; slug: string }
 	| { owner: string; page: "document"; repository: string; slug: string }
 	| {
 		childSlug: string;
@@ -25,6 +26,8 @@ export function documentRouteIdentity(source: DocumentRouteIdentitySource): Docu
 	switch (source.page) {
 		case "channel":
 			return `channel:${source.id}` as DocumentRouteIdentity;
+		case "general":
+			return `general:${source.slug}` as DocumentRouteIdentity;
 		case "document":
 			return `document:${source.owner}/${source.repository}/${source.slug}` as DocumentRouteIdentity;
 		case "child":
