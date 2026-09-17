@@ -45,6 +45,8 @@ export type WidgetOptions = {
 	wire?: Transport;
 	connected?: boolean;
 	canEdit?: boolean;
+	/** Send a selected passage to Clasher for a passage-scoped Cadence proposal. */
+	onCadence?: (passage: string) => void;
 };
 
 export const widgets$ = Cell<WidgetOptions>({});

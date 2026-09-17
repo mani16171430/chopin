@@ -14,7 +14,7 @@ import type { StorageConfig } from "./storage/registry";
 export type Config = {
 	host: string;
 	port: number;
-	/** Planner model. */
+	/** Clasher model. */
 	model: string;
 	/**
 	 * Whether to run the agent at all.
@@ -45,7 +45,7 @@ export type Config = {
 	litellm: LiteLLMConfig;
 	/**
 	 * Clash — this deployment's agent on the Razorpay Agent Platform, called
-	 * through the planner's `ask_clash` tool.
+	 * through the planner's `clash_in_depth` tool.
 	 *
 	 * Optional by design: a deployment without a platform key is still a
 	 * complete chopin, just without the tool. Unlike LiteLLM this must not
@@ -80,7 +80,7 @@ function litellm(agent: boolean): LiteLLMConfig {
 }
 
 /**
- * The Clash integration is opt-in: no key, no `ask_clash` tool.
+ * The Clash integration is opt-in: no key, no `clash_in_depth` tool.
  *
  * A key without a base URL is a misconfiguration worth a sentence, so that
  * combination does fail startup; the inverse (URL set, key empty) is treated

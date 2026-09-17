@@ -52,6 +52,7 @@ export function useWorkspaceIds(): WorkspaceIds {
 			plan: workspaceHeadingId("plan", instance),
 			decisions: workspaceHeadingId("decisions", instance),
 			cadence: workspaceHeadingId("cadence", instance),
+			links: workspaceHeadingId("links", instance),
 			chat: workspaceHeadingId("chat", instance),
 		},
 		pane: { chat: `${instance}-pane-chat` },
@@ -108,14 +109,15 @@ export type WorkspaceProps = {
 	plan: ReactNode;
 	decisions: ReactNode;
 	cadence: ReactNode;
+	links: ReactNode;
 	controls: ReactNode;
 	ids: WorkspaceIds;
 	mode: WorkspaceMode;
 	state: WorkspaceState;
-	view: "plan" | "decisions" | "cadence";
+	view: "plan" | "decisions" | "cadence" | "links";
 	onChatOpen: (open: boolean) => void;
 	onDesktopChatOpen: (open: boolean) => void;
-	onDestination: (destination: "plan" | "decisions" | "cadence") => void;
+	onDestination: (destination: "plan" | "decisions" | "cadence" | "links") => void;
 	unanswered: number;
 	/** Count of Cadence items awaiting human input, for the tab badge. */
 	cadenceNeedsInput?: number;
@@ -144,7 +146,7 @@ export function ChatToggle(
 	},
 ) {
 	let status = activity.busy
-		? "Planner working"
+		? "Clasher working"
 		: activity.unread > 0
 		? `${activity.unread} unread`
 		: undefined;
@@ -209,14 +211,17 @@ function destinationLabel(
 		return `Decisions, ${unanswered} unanswered`;
 	}
 	if (destination === "chat" && activity.busy && activity.unread > 0) {
-		return `Chat, Planner working, ${activity.unread} unread`;
+		return `Chat, Clasher working, ${activity.unread} unread`;
 	}
-	if (destination === "chat" && activity.busy) return "Chat, Planner working";
+	if (destination === "chat" && activity.busy) return "Chat, Clasher working";
 	if (destination === "chat" && activity.unread > 0) {
 		return `Chat, ${activity.unread} unread`;
 	}
 	if (destination === "cadence") {
 		return "Cadence Updates";
+	}
+	if (destination === "links") {
+		return "Links";
 	}
 	return destination === "chat" ? "Chat" : destination === "decisions"
 		? "Decisions"
@@ -235,6 +240,7 @@ export function Workspace(
 		decisions,
 		header,
 		identity,
+		links,
 		mode,
 		onChatOpen,
 		onDesktopChatOpen,
@@ -501,6 +507,23 @@ export function Workspace(
 										Cadence Updates
 									</h2>
 									{cadence}
+								</section>
+							</ContentSwapLayer>
+							<ContentSwapLayer
+								active={presentation.documentVisible && presentation.documentView === "links"}
+								className="workspace-document-layer min-h-0"
+								immediately={immediately}
+								motion={contentSwapMotion}
+							>
+								<section
+									aria-labelledby={ids.heading.links}
+									className="h-full min-h-0"
+									data-document-view="links"
+								>
+									<h2 className="sr-only" id={ids.heading.links} tabIndex={-1}>
+										Links
+									</h2>
+									{links}
 								</section>
 							</ContentSwapLayer>
 						</div>

@@ -17,6 +17,7 @@ import type {
 	ChannelArchiveInput,
 	ChannelArchiveResult,
 	ChannelInvite,
+	ChannelLink,
 	ChannelMcp,
 	ChannelMcpCredential,
 	ChannelPage,
@@ -40,6 +41,7 @@ import type {
 	Lease,
 	LinkResearchTurnJob,
 	LinkResearchTurnJobResult,
+	NewChannelLink,
 	PauseBackgroundJob,
 	ProposedCadenceUpdate,
 	PublishChannelDescription,
@@ -275,6 +277,19 @@ export interface CadenceUpdateStore {
 		items: ProposedCadenceUpdate[],
 		now: Date,
 	): Promise<CadenceUpdate[]>;
+	/**
+	 * Upsert a passage-scoped set into the list rather than regenerating it.
+	 *
+	 * An incoming item matches an existing one on `(team, kind, title, op)` —
+	 * and for op "update" also `targetId` — and is written over it in place,
+	 * keeping the existing id; a non-matching item is appended. Returns the
+	 * full resulting list, ordered by team then title.
+	 */
+	merge(
+		channelId: string,
+		items: ProposedCadenceUpdate[],
+		now: Date,
+	): Promise<CadenceUpdate[]>;
 	updateFields(
 		channelId: string,
 		id: string,
@@ -297,6 +312,21 @@ export interface CadenceUpdateStore {
 	remove(channelId: string, id: string): Promise<boolean>;
 }
 
+/**
+ * Channel-scoped relation links — the "Links" graph's durable edge set.
+ *
+ * The planner adds them; members remove them. `add` is idempotent on the
+ * (channel, kind, refKey) identity: re-adding a known link refreshes its card
+ * fields rather than creating a duplicate. Links are non-secret, returned in
+ * the clear, ordered by kind then title.
+ */
+export interface ChannelLinkStore {
+	list(channelId: string): Promise<ChannelLink[]>;
+	/** Insert or refresh a link; returns the stored row (existing id kept). */
+	add(channelId: string, link: NewChannelLink, now: Date): Promise<ChannelLink>;
+	remove(channelId: string, id: string): Promise<boolean>;
+}
+
 /** The complete durable boundary. No provider-specific primitive crosses it. */
 export interface StorageAdapter {
 	readonly driver: string;
@@ -311,6 +341,7 @@ export interface StorageAdapter {
 	readonly channelMcps: ChannelMcpStore;
 	readonly cadence: CadenceUpdateStore;
 	readonly invites: ChannelInviteStore;
+	readonly links: ChannelLinkStore;
 
 	migrate(): Promise<void>;
 	health(): Promise<void>;

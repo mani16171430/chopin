@@ -1,7 +1,7 @@
 /**
  * Starting the agent.
  *
- * Disposable Planner and worker sessions share one Anthropic client, pointed
+ * Disposable Clasher and worker sessions share one Anthropic client, pointed
  * at the configured LiteLLM gateway. Unlike the Copilot CLI this replaces,
  * there is no subprocess and no filesystem state to reconstruct on
  * restart — a session is just an in-memory conversation.
@@ -11,7 +11,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import { activityLog } from "./activity-log";
 import { gate, publicResearchGate, terminalGate } from "./permissions";
-import { plannerFor, plannerGeneral } from "./planner";
+import { clasherFor, clasherGeneral } from "./planner";
 import { Runtime } from "./runtime";
 
 import type { RuntimeSource, SessionConfig } from "./runtime";
@@ -28,7 +28,7 @@ export type Agent = {
 /** The tools a planner may call, over and above the runtime's own. */
 export type Toolbox = { tools: Tool[] };
 
-export type PlannerSession = {
+export type ClasherSession = {
 	token: string;
 	/** Null on a general document — a channel with no repository. */
 	repository: HostedRepository | null;
@@ -60,15 +60,15 @@ function workerCreditLimit(value: number): number {
 export function plannerConfiguration(
 	config: Pick<Config, "model">,
 	toolbox: Toolbox,
-	options: PlannerSession,
+	options: ClasherSession,
 ): SessionConfig {
 	let tools = toolbox.tools;
 	return {
 		model: config.model,
 		system: [
 			options.repository
-				? plannerFor(`${options.repository.owner}/${options.repository.name}`)
-				: plannerGeneral(),
+				? clasherFor(`${options.repository.owner}/${options.repository.name}`)
+				: clasherGeneral(),
 			"More than one person may be in this conversation; their messages are prefixed with the speaker's handle.",
 			options.bootstrap ?? "",
 		].filter(Boolean).join(" "),
@@ -132,10 +132,10 @@ export function configure(litellm: LiteLLMConfig): void {
 }
 
 /** Create a disposable session authenticated and scoped to one owner and repository. */
-export async function openPlanner(
+export async function openClasher(
 	config: Pick<Config, "agent" | "model">,
 	toolbox: Toolbox,
-	options: PlannerSession,
+	options: ClasherSession,
 ): Promise<Agent> {
 	if (!config.agent) throw new Error("The hosted agent is disabled.");
 	let session = await runtime.open({

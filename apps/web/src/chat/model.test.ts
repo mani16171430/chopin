@@ -124,7 +124,7 @@ describe("transcript groups", () => {
 
 describe("rail copy", () => {
 	it("removes addressing symbols while leaving email addresses alone", () => {
-		expect(displayText("@chopin ask @sam; email me@site.dev"))
+		expect(displayText("@clasher ask @sam; email me@site.dev"))
 			.toBe("ask Sam; email me@site.dev");
 	});
 

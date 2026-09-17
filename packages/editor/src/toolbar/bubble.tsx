@@ -10,7 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { TOGGLE_LINK_COMMAND } from "@lexical/link";
 import { LINK_PROTOCOLS } from "@chopin/dialect";
-import { LinkPlusIcon, MessagePlusIcon } from "@chopin/icons";
+import { LinkPlusIcon, MessagePlusIcon, PlusIcon } from "@chopin/icons";
 
 import { askForUrl } from "./url";
 import { placeSurface } from "./placement";
@@ -140,7 +140,11 @@ const MARKS: Mark[] = [
 ];
 
 export function SelectionBubble(
-	{ disabled, onComment }: { disabled?: boolean; onComment?: () => void },
+	{ disabled, onCadence, onComment }: {
+		disabled?: boolean;
+		onCadence?: () => void;
+		onComment?: () => void;
+	},
 ) {
 	let [editor] = useLexicalComposerContext();
 	let [anchor, setAnchor] = useState<DOMRectLike>();
@@ -403,6 +407,27 @@ export function SelectionBubble(
 									className={`${CELL} ${CELL_OFF}`}
 								>
 									<MessagePlusIcon aria-hidden="true" />
+								</button>
+							</>
+						)}
+
+						{onCadence && (
+							<>
+								<span aria-hidden="true" className={SEAM} />
+								<button
+									type="button"
+									aria-label="Send selection to Clasher for Cadence"
+									title="Send selection to Clasher for Cadence"
+									/* Capture the passage now — this hands off to a turn, and
+									 * the selection would be gone by the time it reads it. */
+									onClick={() => {
+										onCadence();
+										setAnchor(undefined);
+										setPosition(undefined);
+									}}
+									className={`${CELL} ${CELL_OFF}`}
+								>
+									<PlusIcon aria-hidden="true" />
 								</button>
 							</>
 						)}

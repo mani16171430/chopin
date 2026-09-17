@@ -216,8 +216,8 @@ function units(value: string, referenceIndex?: number): TextUnit[] {
 	return result;
 }
 
-/** Remove Planner addressing only from prose; canonical reference labels are opaque. */
-function plannerText(input: TextUnit[]): TextUnit[] {
+/** Remove Clasher addressing only from prose; canonical reference labels are opaque. */
+function clasherText(input: TextUnit[]): TextUnit[] {
 	let text = input.map(unit => unit.value).join("");
 	let filtered: TextUnit[] = [];
 	for (let source = 0; source < input.length; source++) {
@@ -269,7 +269,7 @@ function canonicalMessage(
 	references: Wire.Reference[],
 ): ResolvedMessage {
 	if (references.length === 0) {
-		return { text: destination === "planner" ? instruction(text) : text.trim() };
+		return { text: destination === "clasher" ? instruction(text) : text.trim() };
 	}
 	let canonical: TextUnit[] = [];
 	let cursor = 0;
@@ -279,7 +279,7 @@ function canonicalMessage(
 		cursor = reference.end;
 	}
 	canonical.push(...units(text.slice(cursor)));
-	if (destination === "planner") canonical = plannerText(canonical);
+	if (destination === "clasher") canonical = clasherText(canonical);
 	else {
 		let start = 0;
 		let end = canonical.length;
@@ -634,7 +634,7 @@ export class ReferenceService {
 
 	async resolve(input: ResolveReferences): Promise<ResolvedMessage> {
 		if (typeof input.text !== "string") throw new ChatReferenceError("Message text is invalid.");
-		if (input.destination !== "room" && input.destination !== "planner") {
+		if (input.destination !== "room" && input.destination !== "clasher") {
 			throw new ChatReferenceError("Message destination is invalid.");
 		}
 		let requested = requests(input.text, input.requests);

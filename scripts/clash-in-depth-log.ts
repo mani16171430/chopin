@@ -1,13 +1,14 @@
 #!/usr/bin/env bun
 /**
- * Read the ask_clash call log.
+ * Read the clash_in_depth call log.
  *
- * `ask_clash` writes one JSON line per call — the question sent and the answer
- * (or failure) returned — to `logs/ask_clash.log`. This prints them readably.
+ * `clash_in_depth` writes one JSON line per call — the question sent and the
+ * answer (or failure) returned — to `apps/server/logs/clash_in_depth.log` (the
+ * server's CWD). This prints them readably.
  *
- *   bun scripts/ask-clash-log.ts            every call, oldest first
- *   bun scripts/ask-clash-log.ts --last 5   the five most recent
- *   bun scripts/ask-clash-log.ts --errors   only calls that did not answer
+ *   bun scripts/clash-in-depth-log.ts            every call, oldest first
+ *   bun scripts/clash-in-depth-log.ts --last 5   the five most recent
+ *   bun scripts/clash-in-depth-log.ts --errors   only calls that did not answer
  */
 
 import { readFile } from "node:fs/promises";
@@ -41,9 +42,14 @@ function show(entry: Entry): void {
 let args = process.argv.slice(2);
 let raw: string;
 try {
-	raw = await readFile(new URL("../logs/ask_clash.log", import.meta.url).pathname, "utf8");
+	raw = await readFile(
+		new URL("../apps/server/logs/clash_in_depth.log", import.meta.url).pathname,
+		"utf8",
+	);
 } catch {
-	console.log("no ask_clash log yet — logs/ask_clash.log is written on the first call.");
+	console.log(
+		"no clash_in_depth log yet — apps/server/logs/clash_in_depth.log is written on the first call.",
+	);
 	process.exit(0);
 }
 
@@ -55,7 +61,7 @@ if (args[0] === "--errors") {
 	if (!Number.isInteger(count) || count < 1) throw new Error("usage: --last <count>");
 	all = all.slice(-count);
 } else if (args.length > 0) {
-	throw new Error("usage: bun scripts/ask-clash-log.ts [--last <count> | --errors]");
+	throw new Error("usage: bun scripts/clash-in-depth-log.ts [--last <count> | --errors]");
 }
 
 if (all.length === 0) console.log("no matching calls.");

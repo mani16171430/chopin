@@ -62,9 +62,24 @@ export function Toolbar() {
 		}
 		: undefined;
 
+	// Sending a passage to Clasher for Cadence is always offered when the host
+	// wired a handler; a room with no Cadence MCP fails closed at the server, so
+	// the button never has to know whether the room is Cadence-enabled.
+	let cadence = options.onCadence
+		? () => {
+			let send = options.onCadence;
+			if (!send) return;
+			editor.getEditorState().read(() => {
+				let marked = $describe($getSelection());
+				let passage = marked?.quote?.trim();
+				if (passage) send(passage);
+			});
+		}
+		: undefined;
+
 	return (
 		<>
-			<SelectionBubble disabled={disabled} onComment={comment} />
+			<SelectionBubble disabled={disabled} onCadence={cadence} onComment={comment} />
 			<SlashMenu
 				actions={options.research && options.researchDrafts ? RESEARCH_ACTIONS : undefined}
 				disabled={disabled}

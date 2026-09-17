@@ -1666,7 +1666,7 @@ export function storageContract(name: string, factory: Factory): void {
 				let plannerInput = {
 					...input,
 					id: id("planner-workspace"),
-					title: "Planner research",
+					title: "Clasher research",
 					question: "Research the requested release",
 					origin: "planner" as const,
 					originMessageId: id("planner-message-origin"),
@@ -2982,6 +2982,108 @@ export function storageContract(name: string, factory: Factory): void {
 
 				// Revoking again is a no-op.
 				expect(await storage.invites.revoke(invite.id, now)).toBe(false);
+			} finally {
+				await storage.close();
+			}
+		});
+	});
+
+	describe("channel links", () => {
+		/*
+		 * The "Links" graph's edge set. `add` is idempotent on the (channel,
+		 * kind, refKey) identity: linking the same thing twice refreshes the card
+		 * rather than duplicating it, and the id survives the refresh.
+		 */
+		it("adds, lists, and removes a channel's links", async () => {
+			let storage = await opened(factory);
+			try {
+				let { userId, channelId } = await userAndChannel(storage);
+				let now = new Date("2026-01-05T03:04:05.000Z");
+
+				expect(await storage.links.list(channelId)).toEqual([]);
+
+				let added = await storage.links.add(channelId, {
+					kind: "repo",
+					refKey: "razorpay/payments-core",
+					title: "razorpay/payments-core",
+					subtitle: "repo",
+					url: "https://github.com/razorpay/payments-core",
+					createdBy: userId,
+				}, now);
+				expect(added.channelId).toBe(channelId);
+				expect(added.refKey).toBe("razorpay/payments-core");
+
+				let listed = await storage.links.list(channelId);
+				expect(listed).toHaveLength(1);
+				expect(listed[0]).toMatchObject({ id: added.id, kind: "repo", title: added.title });
+
+				expect(await storage.links.remove(channelId, added.id)).toBe(true);
+				expect(await storage.links.list(channelId)).toEqual([]);
+				// Removing what is not there is a no-op.
+				expect(await storage.links.remove(channelId, added.id)).toBe(false);
+			} finally {
+				await storage.close();
+			}
+		});
+
+		it("re-adding the same (kind, refKey) refreshes instead of duplicating", async () => {
+			let storage = await opened(factory);
+			try {
+				let { userId, channelId } = await userAndChannel(storage);
+				let now = new Date("2026-01-05T03:04:05.000Z");
+
+				let first = await storage.links.add(channelId, {
+					kind: "pull_request",
+					refKey: "razorpay/payments-core#4812",
+					title: "#4812 · deadline fix",
+					subtitle: "pull request · open",
+					createdBy: userId,
+				}, now);
+				let refreshed = await storage.links.add(channelId, {
+					kind: "pull_request",
+					refKey: "razorpay/payments-core#4812",
+					title: "#4812 · deadline fix",
+					subtitle: "pull request · merged",
+					url: "https://github.com/razorpay/payments-core/pull/4812",
+					createdBy: userId,
+				}, now);
+
+				let listed = await storage.links.list(channelId);
+				expect(listed).toHaveLength(1);
+				expect(refreshed.id).toBe(first.id);
+				expect(listed[0].subtitle).toBe("pull request · merged");
+				expect(listed[0].url).toBe("https://github.com/razorpay/payments-core/pull/4812");
+			} finally {
+				await storage.close();
+			}
+		});
+
+		it("keeps links of one channel out of another", async () => {
+			let storage = await opened(factory);
+			try {
+				let { userId, channelId } = await userAndChannel(storage);
+				let now = new Date("2026-01-05T03:04:05.000Z");
+				// A second, distinct channel to prove isolation.
+				await storage.channels.create({
+					id: id("other-channel"),
+					repositoryId: null,
+					repositoryOwner: null,
+					repositoryName: null,
+					title: "Other",
+					createdBy: userId,
+					now,
+				});
+
+				await storage.links.add(channelId, {
+					kind: "ai_doc",
+					refKey: "doc_123",
+					title: "Q3 incident postmortem",
+					url: "https://aidocs.example/doc_123",
+					createdBy: userId,
+				}, now);
+
+				expect(await storage.links.list(channelId)).toHaveLength(1);
+				expect(await storage.links.list(id("other-channel"))).toEqual([]);
 			} finally {
 				await storage.close();
 			}

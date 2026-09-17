@@ -195,13 +195,13 @@ describe("textarea replacement reconciliation", () => {
 });
 
 describe("chat send payloads", () => {
-	test("sorts and trims ranges without letting references summon Planner", () => {
-		let text = "  @chopin compare #Release and %Evidence  ";
+	test("sorts and trims ranges without letting references summon Clasher", () => {
+		let text = "  @clasher compare #Release and %Evidence  ";
 		let document = documentDraft(text, "#Release", "channel-release");
 		expect(chatSendPayload(text, [document], true, REQUEST_ID)).toEqual({
 			requestId: REQUEST_ID,
-			text: "@chopin compare #Release and %Evidence",
-			to: "planner",
+			text: "@clasher compare #Release and %Evidence",
+			to: "clasher",
 			references: [
 				{
 					kind: "document",
@@ -236,11 +236,11 @@ describe("chat send payloads", () => {
 	});
 
 	test("ignores Planner mentions inside document titles but not ordinary percent text", () => {
-		let documentText = "See #Ask @chopin";
-		let percentText = "See %OAuth @chopin";
+		let documentText = "See #Ask @clasher";
+		let percentText = "See %OAuth @clasher";
 		expect(chatSendPayload(
 			documentText,
-			[documentDraft(documentText, "#Ask @chopin")],
+			[documentDraft(documentText, "#Ask @clasher")],
 			true,
 			REQUEST_ID,
 		)).toMatchObject({ to: "room", references: [{ kind: "document" }] });
@@ -249,31 +249,31 @@ describe("chat send payloads", () => {
 			[],
 			true,
 			REQUEST_ID,
-		)).toEqual({ requestId: REQUEST_ID, text: percentText, to: "planner" });
+		)).toEqual({ requestId: REQUEST_ID, text: percentText, to: "clasher" });
 
-		let outside = "@chopin See #Ask @chopin";
+		let outside = "@clasher See #Ask @clasher";
 		expect(
 			chatSendPayload(
 				outside,
-				[documentDraft(outside, "#Ask @chopin")],
+				[documentDraft(outside, "#Ask @clasher")],
 				true,
 				REQUEST_ID,
 			)?.to,
-		).toBe("planner");
+		).toBe("clasher");
 	});
 
 	test("treats tokens as ordinary text when chat references are unsupported", () => {
-		let text = "See #Ask @chopin";
+		let text = "See #Ask @clasher";
 		expect(chatSendPayload(
 			text,
-			[documentDraft(text, "#Ask @chopin")],
+			[documentDraft(text, "#Ask @clasher")],
 			true,
 			REQUEST_ID,
 			false,
 		)).toEqual({
 			requestId: REQUEST_ID,
 			text,
-			to: "planner",
+			to: "clasher",
 		});
 	});
 });

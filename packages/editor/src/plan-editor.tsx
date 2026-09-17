@@ -78,6 +78,8 @@ export type PlanEditorProps = {
 	scrollTop?: number;
 	/** The document host owns persisted view position, not the editor. */
 	onScrollTop?: (top: number) => void;
+	/** Send a selected passage to Clasher for a passage-scoped Cadence proposal. */
+	onCadence?: (passage: string) => void;
 	className?: string;
 };
 
@@ -97,6 +99,7 @@ export function PlanEditor(
 		commentPresentation = "popover",
 		connection,
 		motionImmediately,
+		onCadence,
 		onScrollTop,
 		questionMotion,
 		questions,
@@ -263,6 +266,7 @@ export function PlanEditor(
 						wire,
 						connected: !offline,
 						canEdit: !readOnly,
+						onCadence,
 					}),
 				]
 				: [],
@@ -285,6 +289,7 @@ export function PlanEditor(
 			changes,
 			offline,
 			readOnly,
+			onCadence,
 		],
 	);
 

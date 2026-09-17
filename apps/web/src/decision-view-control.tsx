@@ -88,6 +88,19 @@ export function DecisionViewControl(
 					</span>
 				)}
 			</button>
+			<button
+				aria-current={view === "links" ? "page" : undefined}
+				aria-pressed={view === "links"}
+				className={`btn btn-sm transition-[background-color,box-shadow,color] ${
+					view === "links"
+						? "bg-ground font-medium text-gray-800"
+						: "text-text-tertiary hover:bg-hover"
+				}`}
+				onClick={() => onView("links")}
+				type="button"
+			>
+				Links
+			</button>
 		</div>
 	);
 }

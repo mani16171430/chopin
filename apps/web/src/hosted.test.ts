@@ -24,6 +24,7 @@ const workspaceIds = {
 		decisions: "workspace-decisions-heading",
 		plan: "workspace-plan-heading",
 		cadence: "workspace-cadence-heading",
+		links: "workspace-links-heading",
 	},
 	pane: { chat: "workspace-chat-pane" },
 };
@@ -297,6 +298,7 @@ describe("anchored child lifecycle", () => {
 			chatActivity: { busy: false, unread: 0 },
 			decisions: createElement("div", null, "Decisions"),
 			cadence: createElement("div", null, "Cadence"),
+			links: createElement("div", null, "Links"),
 			header: createElement("header", null, "Parent header"),
 			identity: "parent-room",
 			ids: workspaceIds,
@@ -332,6 +334,7 @@ describe("anchored child lifecycle", () => {
 			chatActivity: { busy: true, unread: 2 },
 			decisions: createElement("div", null, "Decisions"),
 			cadence: createElement("div", null, "Cadence"),
+			links: createElement("div", null, "Links"),
 			header: createElement("header", null, "Child header"),
 			identity: "child-room",
 			ids: workspaceIds,
@@ -351,9 +354,9 @@ describe("anchored child lifecycle", () => {
 		);
 
 		expect(markup).toContain("Child chat");
-		expect(markup).toContain('aria-label="Show chat pane, Planner working"');
+		expect(markup).toContain('aria-label="Show chat pane, Clasher working"');
 		expect(markup).toContain('aria-label="Close Source review"');
-		expect(toolbar).toContain('aria-label="Show chat pane, Planner working"');
+		expect(toolbar).toContain('aria-label="Show chat pane, Clasher working"');
 		expect(toolbar).toContain('aria-label="Close Source review"');
 		expect(toolbar.indexOf("Show chat pane")).toBeLessThan(
 			toolbar.indexOf("Close Source review"),
@@ -367,6 +370,7 @@ describe("anchored child lifecycle", () => {
 			chatActivity: { busy: false, unread: 0 },
 			decisions: createElement("div", null, "Decisions"),
 			cadence: createElement("div", null, "Cadence"),
+			links: createElement("div", null, "Links"),
 			header: createElement("header", null, "Child header"),
 			identity: "child-room",
 			ids: workspaceIds,
@@ -398,6 +402,7 @@ describe("anchored child lifecycle", () => {
 			chatActivity: { busy: false, unread: 0 },
 			decisions: createElement("div", null, "Decisions"),
 			cadence: createElement("div", null, "Cadence"),
+			links: createElement("div", null, "Links"),
 			header: createElement("header", null, "Workspace header"),
 			ids: workspaceIds,
 			mode: "split" as const,

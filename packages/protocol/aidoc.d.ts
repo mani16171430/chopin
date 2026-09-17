@@ -3,7 +3,7 @@ import type { Frame, Request } from "./index";
 type KIND<K extends string> = Frame & { kind: K };
 
 /**
- * "Generate AI Doc" — a member button that asks the room's Planner to write a
+ * "Generate AI Doc" — a member button that asks the room's Clasher to write a
  * Razorpay AI Doc about the current document and publish it through the
  * channel's AI-Docs MCP server.
  *

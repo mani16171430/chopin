@@ -139,7 +139,7 @@ test("read_reference accepts only ids made available by the active chat session"
 		anchors() {},
 		changes() {},
 		readReference: async id => {
-			if (id !== available) throw new Error("reference is not available in this Planner session");
+			if (id !== available) throw new Error("reference is not available in this Clasher session");
 			reads.push(id);
 			return { id, source: "untrusted" };
 		},
@@ -635,7 +635,7 @@ test("chat-started tools retain only the current member request provenance", asy
 			rid: "request",
 			requestId: crypto.randomUUID(),
 			text: "prepare implementation",
-			to: "planner",
+			to: "clasher",
 			ts: 0,
 		},
 	);
@@ -649,8 +649,8 @@ test("chat-started tools retain only the current member request provenance", asy
 			kind: "chat:send",
 			rid: "queued",
 			requestId: crypto.randomUUID(),
-			text: "@chopin start research on version 3 adoption",
-			to: "planner",
+			text: "@clasher start research on version 3 adoption",
+			to: "clasher",
 			ts: 0,
 		},
 	);
@@ -825,4 +825,189 @@ test("read_cadence returns the room's proposals as given", async () => {
 	expect(tool.skipPermission).toBe(true);
 	expect(tool.parameters).toEqual({ type: "object", properties: {}, additionalProperties: false });
 	expect(JSON.parse(await tool.handler({} as never) as string)).toEqual(items);
+});
+
+async function cadenceTool(
+	plan: Awaited<ReturnType<typeof opened>>["plan"],
+	server: Awaited<ReturnType<typeof opened>>["server"],
+	received: unknown[][],
+) {
+	let tool = toolbox({
+		plan,
+		server,
+		room: "test",
+		persist: () => Service.persist(plan),
+		exclusive: <T>(action: () => Promise<T>) => Service.exclusive(plan, action),
+		async publish() {},
+		anchors() {},
+		changes() {},
+		proposeCadence: async items => {
+			received.push(items);
+			return { count: items.length };
+		},
+	}).find(tool => tool.name === "propose_cadence_updates");
+	if (!tool?.handler) throw new Error("propose_cadence_updates is missing");
+	return tool;
+}
+
+function cadenceItem(overrides: Record<string, unknown> = {}) {
+	return {
+		op: "create",
+		kind: "work_item",
+		title: "Ship the thing",
+		fields: { operation: "create" },
+		confidence: 0.9,
+		mcp_server: "cadence",
+		mcp_tool: "work_item",
+		...overrides,
+	};
+}
+
+test("propose_cadence_updates rejects an item whose mcp_tool is team", async () => {
+	let { plan, server } = await opened("Cadence context.\n");
+	let received: unknown[][] = [];
+	let tool = await cadenceTool(plan, server, received);
+	let call = async (raw: unknown) => (await tool.handler!(raw as never)) as string;
+
+	let response = await call({ items: [cadenceItem({ mcp_tool: "team" })] });
+	expect(response).toContain('must not use mcp_tool "team"');
+	expect(received).toHaveLength(0);
+
+	// The gate normalizes case and whitespace — `Team` and ` team ` fail too.
+	expect(await call({ items: [cadenceItem({ mcp_tool: "Team" })] }))
+		.toContain('must not use mcp_tool "team"');
+	expect(await call({ items: [cadenceItem({ mcp_tool: " team " })] }))
+		.toContain('must not use mcp_tool "team"');
+	expect(received).toHaveLength(0);
+});
+
+test("propose_cadence_updates forces needs_input when a state is only a state_group", async () => {
+	let { plan, server } = await opened("Cadence context.\n");
+	let received: unknown[][] = [];
+	let tool = await cadenceTool(plan, server, received);
+	let call = async (raw: unknown) => (await tool.handler!(raw as never)) as string;
+
+	// A state_group-only payload is not push-ready even at full confidence.
+	await call({ items: [cadenceItem({ fields: { operation: "create", state_group: "started" } })] });
+	let flagged = received.at(-1)?.[0] as Record<string, unknown>;
+	expect(flagged.status).toBe("needs_input");
+	expect(flagged.needs).toContain("state_id");
+
+	// A resolved state_id alongside the group stays ready.
+	await call({
+		items: [cadenceItem({
+			fields: { operation: "create", state_group: "started", state_id: "state-uuid" },
+		})],
+	});
+	let resolved = received.at(-1)?.[0] as Record<string, unknown>;
+	expect(resolved.status).toBe("ready");
+	expect(resolved.needs).toEqual([]);
+
+	// An agent that already flagged state_id in needs is not double-listed.
+	await call({
+		items: [cadenceItem({
+			fields: { operation: "create", state_group: "started" },
+			needs: ["state_id"],
+			confidence: 0.4,
+		})],
+	});
+	let listed = received.at(-1)?.[0] as Record<string, unknown>;
+	expect(listed.needs).toEqual(["state_id"]);
+});
+
+function linkContext(
+	plan: Awaited<ReturnType<typeof opened>>["plan"],
+	server: Awaited<ReturnType<typeof opened>>["server"],
+	linkEntities?: (links: unknown[]) => Promise<{ linked: number }>,
+) {
+	return {
+		plan,
+		server,
+		room: "test",
+		persist: () => Service.persist(plan),
+		exclusive: <T>(action: () => Promise<T>) => Service.exclusive(plan, action),
+		async publish() {},
+		anchors() {},
+		changes() {},
+		...(linkEntities ? { linkEntities } : {}),
+	};
+}
+
+test("link_entities is present only when the room wires a store", async () => {
+	let { plan, server } = await opened("Links context.\n");
+	expect(toolbox(linkContext(plan, server)).find(tool => tool.name === "link_entities"))
+		.toBeUndefined();
+	expect(
+		toolbox(linkContext(plan, server, async () => ({ linked: 0 }))).find(tool =>
+			tool.name === "link_entities"
+		),
+	).toBeDefined();
+});
+
+test("link_entities validates kinds and hands clean links to the store", async () => {
+	let { plan, server } = await opened("Links context.\n");
+	let received: unknown[] = [];
+	let tool = toolbox(
+		linkContext(plan, server, async links => {
+			received = links;
+			return { linked: links.length };
+		}),
+	).find(tool => tool.name === "link_entities");
+	if (!tool?.handler) throw new Error("link_entities is missing");
+	expect(tool.skipPermission).toBe(true);
+
+	let result = JSON.parse(
+		await tool.handler({
+			links: [
+				{ kind: "repo", ref: "razorpay/payments-core", title: "razorpay/payments-core" },
+				{
+					kind: "pull_request",
+					ref: "razorpay/payments-core#4812",
+					title: "#4812 · deadline fix",
+					subtitle: "merged",
+					url: "https://github.com/razorpay/payments-core/pull/4812",
+				},
+				{
+					kind: "ai_doc",
+					ref: "doc_123",
+					title: "Q3 incident postmortem",
+					url: "https://aidocs.example/doc_123",
+				},
+			],
+		} as never) as string,
+	);
+	expect(result).toEqual({ linked: 3 });
+	expect(received).toEqual([
+		{ kind: "repo", refKey: "razorpay/payments-core", title: "razorpay/payments-core" },
+		{
+			kind: "pull_request",
+			refKey: "razorpay/payments-core#4812",
+			title: "#4812 · deadline fix",
+			subtitle: "merged",
+			url: "https://github.com/razorpay/payments-core/pull/4812",
+		},
+		{
+			kind: "ai_doc",
+			refKey: "doc_123",
+			title: "Q3 incident postmortem",
+			url: "https://aidocs.example/doc_123",
+		},
+	]);
+});
+
+test("link_entities rejects a bad kind, an empty title, and a non-http url", async () => {
+	let { plan, server } = await opened("Links context.\n");
+	let tool = toolbox(linkContext(plan, server, async () => ({ linked: 0 }))).find(tool =>
+		tool.name === "link_entities"
+	);
+	if (!tool?.handler) throw new Error("link_entities is missing");
+	let call = async (raw: unknown) => (await tool.handler!(raw as never)) as string;
+
+	expect(await call({ links: [] })).toContain("1 to 50");
+	expect(await call({ links: [{ kind: "slack", ref: "x", title: "t" }] })).toContain("kind");
+	expect(await call({ links: [{ kind: "repo", ref: "x", title: "" }] })).toContain("title");
+	expect(await call({ links: [{ kind: "repo", ref: "x", title: "t", url: "not a url" }] }))
+		.toContain("url");
+	expect(await call({ links: [{ kind: "repo", ref: "x", title: "t", url: "ftp://x" }] }))
+		.toContain("http");
 });

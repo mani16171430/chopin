@@ -69,6 +69,9 @@ const MIGRATIONS = [{
 }, {
 	id: "018_invite_token_recovery",
 	path: join(import.meta.dir, "migrations/018_invite_token_recovery.sql"),
+}, {
+	id: "019_channel_links",
+	path: join(import.meta.dir, "migrations/019_channel_links.sql"),
 }] satisfies Migration[];
 
 /** Navigation shipped as 002 before document slugs claimed that number on main. */

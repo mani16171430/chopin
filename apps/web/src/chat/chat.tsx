@@ -414,8 +414,8 @@ export function Chat(
 								end: event.currentTarget.selectionEnd,
 							})}
 						placeholder={sessionActive
-							? "Chopin session on — every message goes to the Planner"
-							: `Use ${MENTION} to ask Chopin`}
+							? "Clasher session on — every message goes to Clasher"
+							: `Use ${MENTION} to ask Clasher`}
 						ref={textarea}
 						rows={3}
 						value={draft.text}
@@ -431,16 +431,16 @@ export function Chat(
 							<label
 								className="flex cursor-pointer items-center gap-1.5"
 								title={sessionActive
-									? "End Chopin session — messages need @chopin again"
-									: "Start Chopin session — everyone's message goes to the Planner"}
+									? "End Clasher session — messages need @clasher again"
+									: "Start Clasher session — everyone's message goes to Clasher"}
 							>
 								<span className="text-[12px] text-subtle select-none">
-									Chopin
+									Clasher
 								</span>
 								<input
 									aria-label={sessionActive
-										? "End Chopin session"
-										: "Start Chopin session"}
+										? "End Clasher session"
+										: "Start Clasher session"}
 									checked={sessionActive}
 									className="session-toggle"
 									disabled={!composerReady}
@@ -455,10 +455,10 @@ export function Chat(
 						)}
 						{agent && busy && (
 							<button
-								aria-label="Stop Planner"
+								aria-label="Stop Clasher"
 								className="btn btn-icon btn-secondary"
 								onClick={() => wire?.send("chat:abort")}
-								title="Stop Planner"
+								title="Stop Clasher"
 								type="button"
 							>
 								<img alt="" className="size-[14px]" src={plannerStop} />

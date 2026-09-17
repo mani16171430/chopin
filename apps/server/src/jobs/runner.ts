@@ -84,7 +84,7 @@ function expected(err: unknown): boolean {
 
 function noop(): void {}
 
-/** Claims and executes registered work without sharing Planner sessions or transcript state. */
+/** Claims and executes registered work without sharing Clasher sessions or transcript state. */
 export class JobRunner {
 	#options:
 		& Required<

@@ -24,7 +24,7 @@ import type { Tool } from "./types";
 import type { Research } from "@chopin/protocol";
 import type { Plan } from "../plan/service";
 import type { JobService } from "../jobs/service";
-import type { ProposedCadenceUpdate } from "../storage/model";
+import type { NewChannelLink, ProposedCadenceUpdate } from "../storage/model";
 import type { SocketData } from "../wire";
 
 /** Every tool answers with a string; a failure is a value, not a throw. */
@@ -84,45 +84,115 @@ function cadenceProposals(raw: unknown): ProposedCadenceUpdate[] {
 		if (!item.fields || typeof item.fields !== "object" || Array.isArray(item.fields)) {
 			throw new Error(`cadence item ${index} has invalid fields`);
 		}
-		let needs = item.needs === undefined ? [] : item.needs;
+		let needs: unknown = item.needs === undefined ? [] : item.needs;
 		if (
 			!Array.isArray(needs) || needs.some(entry => typeof entry !== "string")
 			|| needs.length > 40
 		) throw new Error(`cadence item ${index} has invalid needs`);
+		let resolvedNeeds: string[] = needs;
+		let mcpTool = string("mcp_tool", 128);
+		// Team creation is a workspace-admin operation, so a cadence proposal must
+		// never carry it — the validator, not the persona, is the deterministic gate.
+		if (mcpTool.trim().toLowerCase() === "team") {
+			throw new Error(
+				`cadence item ${index} must not use mcp_tool "team" — team creation is a workspace-admin operation`,
+			);
+		}
 		let targetId = string("target_id", 200, false);
+		let fields = item.fields as Record<string, unknown>;
+		// state_group is only a category — a state-setting payload without a
+		// list_states-resolved state_id is not push-ready.
+		if (
+			fields.state_group !== undefined && fields.state_id === undefined
+			&& !resolvedNeeds.includes("state_id")
+		) {
+			resolvedNeeds = [...resolvedNeeds, "state_id"];
+		}
 		// An unresolved requirement forces human completion regardless of the
 		// number the agent picked — a payload missing a required id is not ready.
-		let ready = confidence >= 0.7 && needs.length === 0;
+		let ready = confidence >= 0.7 && resolvedNeeds.length === 0;
 		return {
 			team: string("team", 200, false),
 			op: item.op,
 			...(targetId ? { targetId } : {}),
 			kind: string("kind", 80),
 			title: string("title", 400),
-			fields: item.fields as Record<string, unknown>,
+			fields,
 			confidence,
-			needs: needs as string[],
+			needs: resolvedNeeds,
 			status: ready ? "ready" as const : "needs_input" as const,
 			mcpServer: string("mcp_server", 64),
-			mcpTool: string("mcp_tool", 128),
+			mcpTool,
 		};
 	});
 }
 
 function clashQuestion(raw: unknown): string {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-		throw new Error("ask_clash arguments must be an object");
+		throw new Error("clash_in_depth arguments must be an object");
 	}
 	let args = raw as Record<string, unknown>;
 	let fields = Object.keys(args);
 	if (fields.length !== 1 || fields[0] !== "question") {
-		throw new Error("ask_clash accepts only the required question field");
+		throw new Error("clash_in_depth accepts only the required question field");
 	}
 	if (typeof args.question !== "string" || args.question.length < 1) {
 		throw new Error("question must be non-empty text");
 	}
 	if (args.question.length > 8_192) throw new Error("question exceeds 8192 characters");
 	return args.question;
+}
+
+const LINK_KINDS = new Set(["repo", "pull_request", "ai_doc"]);
+
+function linkEntitiesInput(raw: unknown): Omit<NewChannelLink, "createdBy">[] {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new Error("link_entities arguments must be an object");
+	}
+	let list = (raw as Record<string, unknown>).links;
+	if (!Array.isArray(list)) throw new Error("links must be an array");
+	if (list.length < 1 || list.length > 50) throw new Error("links must hold 1 to 50 entries");
+	return list.map((entry, index) => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+			throw new Error(`link ${index} must be an object`);
+		}
+		let item = entry as Record<string, unknown>;
+		let text = (key: string, max: number, required: boolean): string | undefined => {
+			let value = item[key];
+			if (value === undefined) {
+				if (required) throw new Error(`link ${index} is missing ${key}`);
+				return undefined;
+			}
+			if (typeof value !== "string" || (required && !value.trim()) || value.length > max) {
+				throw new Error(`link ${index} has an invalid ${key}`);
+			}
+			return value;
+		};
+		let kind = item.kind;
+		if (typeof kind !== "string" || !LINK_KINDS.has(kind)) {
+			throw new Error(`link ${index} has an invalid kind`);
+		}
+		let ref = text("ref", 300, true)!;
+		let url = text("url", 2048, false);
+		if (url !== undefined) {
+			let parsed: URL;
+			try {
+				parsed = new URL(url);
+			} catch (cause) {
+				throw new Error(`link ${index} url is not a valid URL`, { cause });
+			}
+			if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+				throw new Error(`link ${index} url must be http(s)`);
+			}
+		}
+		return {
+			kind: kind as NewChannelLink["kind"],
+			refKey: ref,
+			title: text("title", 400, true)!,
+			...(text("subtitle", 200, false) ? { subtitle: text("subtitle", 200, false) } : {}),
+			...(url ? { url } : {}),
+		};
+	});
 }
 
 function referenceId(raw: unknown): string {
@@ -160,17 +230,26 @@ export type Context = {
 	jobs?: JobService;
 	/** Starts the exact research request represented by the current member turn. */
 	createResearch?: (question: string) => Promise<ResearchWorkspaceRequest>;
-	/** Reads one reference retained by this room's active Planner session. */
+	/** Reads one reference retained by this room's active Clasher session. */
 	readReference?: (id: string) => Promise<unknown>;
 	/** Replaces the room's Cadence work-item proposals and broadcasts them. */
-	proposeCadence?: (items: ProposedCadenceUpdate[]) => Promise<{ count: number }>;
+	proposeCadence?: (
+		items: ProposedCadenceUpdate[],
+		mode: "replace" | "merge",
+	) => Promise<{ count: number }>;
 	/** Reads the room's current Cadence work-item proposals. */
 	readCadence?: () => Promise<unknown[]>;
+	/**
+	 * Links the room's document to a repository, pull request or AI Doc, on the
+	 * asking member's behalf. Absent when the room wired no link store, and the
+	 * tool goes absent with it.
+	 */
+	linkEntities?: (links: Omit<NewChannelLink, "createdBy">[]) => Promise<{ linked: number }>;
 	/**
 	 * Asks Clash a question and waits for its answer. Absent when the
 	 * platform is not configured, and the tool goes absent with it.
 	 */
-	askClash?: (question: string) => Promise<string>;
+	clashInDepth?: (question: string) => Promise<string>;
 };
 
 export function toolbox(context: Context): Tool[] {
@@ -500,17 +579,32 @@ export function toolbox(context: Context): Tool[] {
 				+ "set every time.\n"
 				+ "RESOLVE FIRST, then propose. The Cadence MCP multiplexes CRUD through an "
 				+ "`operation` field on ONE tool per entity — `mcp_tool` is the entity tool "
-				+ "(`work_item`, `project`, `team`, `sprint`, `objective`, `key_result`, "
-				+ "`intake_issue`, `document`), NOT a create/update tool. Put `operation` "
-				+ "(create|update|…) inside `fields`. Almost every call needs `workspace_slug`, and "
-				+ "every work-item/project/sprint create needs a real `team_id` (a UUID). NEVER guess "
-				+ "ids: resolve `team_id` via team(operation:list), and state_id/label_ids/"
-				+ "assignee_ids/project_id via list_states / list_labels / team_member(find); run "
-				+ "work_item(operation:search) to dedupe and decide create-vs-update. Call those "
-				+ "Cadence tools yourself before proposing, and put only resolved values in `fields`.\n"
+				+ "(`work_item`, `project`, `work_item_discussion`, `intake_issue`, `document`), NOT a "
+				+ "create/update tool, and NOT `team` (team create is a workspace-admin operation — "
+				+ "never propose it). Put `operation` (create|update|…) inside `fields`. Almost every "
+				+ "call needs `workspace_slug`, and every work-item/project create needs a real "
+				+ "`team_id` (a UUID). NEVER guess ids: resolve `team_id` via team(operation:list), "
+				+ "and state_id/label_ids/assignee_ids/project_id via list_states / list_labels / "
+				+ "team_member(find); run work_item(operation:search) to dedupe and decide "
+				+ "create-vs-update. Call those Cadence tools yourself before proposing, and put only "
+				+ "resolved values in `fields`.\n"
+				+ "Field notes: state groups (backlog|unstarted|started|completed|cancelled) are "
+				+ "only CATEGORIES — each team configures its own states under them, so a "
+				+ "work-item create/update that sets a state MUST carry `state_id` (a UUID) "
+				+ "resolved via list_states for that team. Use `state_group` only as a category "
+				+ "hint alongside `state_id`, never as a substitute; if you cannot resolve the "
+				+ 'exact state, omit both and list "state_id" in `needs`. `priority` is '
+				+ "urgent|high|medium|low|none; dates are "
+				+ "YYYY-MM-DD (`start_date`/`target_date`). A project `status` is "
+				+ "backlog|planned|completed|cancelled — `started`/`in_progress` are REJECTED. A "
+				+ "sub-issue is a `work_item` create with `parent` set to the parent item's id; "
+				+ "relations between existing items go through "
+				+ "`work_item_discussion` (operation: add_relation, `relation_type` "
+				+ "blocked_by|blocking|duplicate|relates_to|start_before|start_after|finish_before|"
+				+ "finish_after).\n"
 				+ "`fields` is the COMPLETE argument object the push sends verbatim to `mcp_tool` — "
 				+ "include `operation`, `workspace_slug`, the resolved `team_id`, the entity fields "
-				+ "(name, description, priority, dates as YYYY-MM-DD, …) and any resolved ids; for an "
+				+ "(name, description, priority, dates, …) and any resolved ids; for an "
 				+ 'update also include the entity id (e.g. `work_item_id`). Use op "update" with '
 				+ 'target_id for an existing entity, else "create" — mirror it in `fields.operation`. '
 				+ "Group each item by the `team` it goes under (leave `team` empty only if you truly "
@@ -523,6 +617,14 @@ export function toolbox(context: Context): Tool[] {
 			parameters: {
 				type: "object",
 				properties: {
+					mode: {
+						type: "string",
+						enum: ["replace", "merge"],
+						description:
+							"replace (default) regenerates the whole room list; merge upserts this "
+							+ "set into it, matching an existing item on (team, kind, title, op) and "
+							+ "keeping the rest. Use merge for a passage-scoped proposal.",
+					},
 					items: {
 						type: "array",
 						maxItems: 100,
@@ -566,7 +668,10 @@ export function toolbox(context: Context): Tool[] {
 				answer("propose_cadence_updates", async () => {
 					if (!context.proposeCadence) throw new Error("Cadence updates are unavailable");
 					let items = cadenceProposals(raw);
-					return context.proposeCadence(items);
+					let mode = (raw as { mode?: unknown }).mode === "merge"
+						? "merge" as const
+						: "replace" as const;
+					return context.proposeCadence(items, mode);
 				}),
 		},
 		{
@@ -741,10 +846,10 @@ export function toolbox(context: Context): Tool[] {
 	 * configured the platform — a tool that can only say "not configured" is
 	 * context the model should never have to carry.
 	 */
-	if (context.askClash) {
-		let askClash = context.askClash;
+	if (context.clashInDepth) {
+		let clashInDepth = context.clashInDepth;
 		tools.push({
-			name: "ask_clash",
+			name: "clash_in_depth",
 			description: "Ask Clash a question that needs Razorpay-internal knowledge — "
 				+ "the knowledge base, Coralogix logs, or cluster state that this room cannot see. "
 				+ "Pass one self-contained question with all the context it needs. The answer takes a "
@@ -756,7 +861,7 @@ export function toolbox(context: Context): Tool[] {
 				required: ["question"],
 				additionalProperties: false,
 			},
-			handler: raw => answer("ask_clash", () => askClash(clashQuestion(raw))),
+			handler: raw => answer("clash_in_depth", () => clashInDepth(clashQuestion(raw))),
 		});
 	}
 
@@ -776,6 +881,51 @@ export function toolbox(context: Context): Tool[] {
 			parameters: { type: "object", properties: {}, additionalProperties: false },
 			skipPermission: true,
 			handler: () => answer("read_cadence", () => readCadence()),
+		});
+	}
+
+	/*
+	 * Linking is additive and a member can remove any link, so it skips the
+	 * permission gate. It exists only where the room wired a link store.
+	 */
+	if (context.linkEntities) {
+		let linkEntities = context.linkEntities;
+		tools.push({
+			name: "link_entities",
+			description: "Link this room's document to the repositories, pull requests and AI "
+				+ "Docs it is about, so the Links graph shows what it touches. Each link has a "
+				+ "`kind` (repo | pull_request | ai_doc), a canonical `ref` (owner/name for a repo, "
+				+ "owner/name#number for a PR, the document id for an AI doc), a short `title`, and "
+				+ 'optionally a `subtitle` (a status line like "merged") and a `url`. Link only '
+				+ "what the document is genuinely about; re-linking the same ref refreshes it. "
+				+ "Resolve repo/PR details against the repository tools before linking so titles "
+				+ "and statuses are accurate, not guessed.",
+			parameters: {
+				type: "object",
+				properties: {
+					links: {
+						type: "array",
+						minItems: 1,
+						maxItems: 50,
+						items: {
+							type: "object",
+							properties: {
+								kind: { type: "string", enum: ["repo", "pull_request", "ai_doc"] },
+								ref: { type: "string", minLength: 1, maxLength: 300 },
+								title: { type: "string", minLength: 1, maxLength: 400 },
+								subtitle: { type: "string", maxLength: 200 },
+								url: { type: "string", maxLength: 2048 },
+							},
+							required: ["kind", "ref", "title"],
+							additionalProperties: false,
+						},
+					},
+				},
+				required: ["links"],
+				additionalProperties: false,
+			},
+			skipPermission: true,
+			handler: raw => answer("link_entities", () => linkEntities(linkEntitiesInput(raw))),
 		});
 	}
 

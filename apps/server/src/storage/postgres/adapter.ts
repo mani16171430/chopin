@@ -9,6 +9,7 @@ import { PostgresBackgroundJobStore } from "./jobs";
 import { PostgresResearchWorkspaceStore } from "./research";
 import { PostgresChannelMcpStore } from "./channel-mcps";
 import { PostgresCadenceUpdateStore } from "./cadence";
+import { PostgresChannelLinkStore } from "./links";
 
 import type { TransactionSQL } from "bun";
 import type {
@@ -45,6 +46,7 @@ import type {
 	BackgroundJobStore,
 	CadenceUpdateStore,
 	ChannelInviteStore,
+	ChannelLinkStore,
 	ChannelMcpStore,
 	ChannelStore,
 	CollaborationStore,
@@ -507,6 +509,10 @@ export class PostgresStorage implements StorageAdapter {
 			this.#sql,
 			(action, execute) => this.#run(action, execute),
 		);
+		this.links = new PostgresChannelLinkStore(
+			this.#sql,
+			(action, execute) => this.#run(action, execute),
+		);
 	}
 
 	readonly users: UserStore = {
@@ -611,6 +617,7 @@ export class PostgresStorage implements StorageAdapter {
 	readonly research: ResearchWorkspaceStore;
 	readonly channelMcps: ChannelMcpStore;
 	readonly cadence: CadenceUpdateStore;
+	readonly links: ChannelLinkStore;
 
 	readonly channels: ChannelStore = {
 		create: input => this.#createChannel(input),

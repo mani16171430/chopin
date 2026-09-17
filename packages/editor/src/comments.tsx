@@ -275,7 +275,7 @@ export function ThreadCard({
 	let confirmation = confirming === "accept"
 		? {
 			action: "Apply feedback",
-			message: "Planner will use this feedback to update the document.",
+			message: "Clasher will use this feedback to update the document.",
 			onConfirm: onAccept,
 		}
 		: confirming === "dismiss"

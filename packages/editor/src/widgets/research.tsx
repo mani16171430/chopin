@@ -248,7 +248,7 @@ export function ResearchCard(
 					<p className="plan-research-summary">{ready.summary}</p>
 					<p className="plan-research-meta">
 						<span>{sourceCount}</span>
-						<span>Researched by Planner</span>
+						<span>Researched by Clasher</span>
 					</p>
 				</>
 			)}

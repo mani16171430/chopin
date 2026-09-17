@@ -201,7 +201,7 @@ export class ThreadStore {
 		void this.#wire.ask<Chat.Sent>("chat:send", {
 			requestId,
 			text: `apply the accepted comment on "${view.quote}" — it has not been actioned yet.`,
-			to: "planner",
+			to: "clasher",
 		}).then(() => {
 			if (this.#retryRequests.get(id) === requestId) this.#retryRequests.delete(id);
 		}).catch(() => {});

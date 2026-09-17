@@ -4,7 +4,7 @@
  * Definitions are shared by the channel; each member's credential for one is
  * private — set or cleared here, stored server-side sealed, and never shown.
  * Adding or removing a server, or a member setting their credential, refreshes
- * the room's Planner so the next turn sees the new set.
+ * the room's Clasher so the next turn sees the new set.
  *
  * The panel opens from the chat header; its trigger lives beside the Chat
  * toggle. Editors may add or remove a server; every member may set or clear

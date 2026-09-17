@@ -205,7 +205,7 @@ describe("what an accepted thread still owes", () => {
 					/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
 				),
 				text: 'apply the accepted comment on "shorten this" — it has not been actioned yet.',
-				to: "planner",
+				to: "clasher",
 			},
 		}]);
 	});

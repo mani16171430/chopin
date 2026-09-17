@@ -9,7 +9,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { MemoryStorage } from "../storage/memory/adapter";
-import { field, list, propose, push } from "./service";
+import { field, list, propose, push, pushAll } from "./service";
 
 import type { Server } from "bun";
 import type { Chat, Room } from "../chat/service";
@@ -202,5 +202,152 @@ describe("cadence proposals", () => {
 				value.kind === "session:error" && String(value.message).includes("complete")
 			),
 		).toBe(true);
+	});
+
+	it("push-all replies that there is nothing to push when no item is ready", async () => {
+		replies = [];
+		let storage = new MemoryStorage();
+		let { context } = room(storage);
+		await propose(
+			context,
+			PROPOSALS.map(item => ({ ...item, status: "needs_input" as const })),
+		);
+
+		await pushAll(context, socket("ana", "ana"), { kind: "cadence:push-all", ts: 0, rid: rid() });
+		expect(
+			replies.some(value =>
+				value.kind === "session:error" && String(value.message).includes("no ready items")
+			),
+		).toBe(true);
+		expect(replies.some(value => value.kind === "cadence:push-all-result")).toBe(false);
+	});
+
+	it("push-all pushes only ready items and replies with the tally", async () => {
+		replies = [];
+		let storage = new MemoryStorage();
+		let { context } = room(storage);
+		await propose(context, PROPOSALS);
+		// One more ready item alongside the existing one; the needs_input item must
+		// be left alone. The list is ordered by team+title, so [1] is the duplicate
+		// of "Add refund webhook" — mark it already pushed.
+		await propose(context, [
+			...PROPOSALS,
+			{
+				...PROPOSALS[0]!,
+				title: "Add refund webhook (again)",
+				fields: { operation: "create", workspace_slug: "razorpay" },
+			},
+		]);
+		await storage.cadence.setStatus(
+			"room",
+			(await storage.cadence.list("room"))[1]!.id,
+			"pushed",
+			{ pushedUrl: "https://cadence.example/PAY-1" },
+			new Date(),
+		);
+
+		await pushAll(context, socket("ana", "ana"), { kind: "cadence:push-all", ts: 0, rid: rid() });
+
+		let stored = await storage.cadence.list("room");
+		let byTitle = new Map(stored.map(item => [item.title, item]));
+		// No credential in the memory store, so the ready item fails closed.
+		expect(byTitle.get("Add refund webhook")!.status).toBe("failed");
+		// Untouched: already pushed and still needs input.
+		expect(byTitle.get("Add refund webhook (again)")!.status).toBe("pushed");
+		expect(byTitle.get("Backfill refunds")!.status).toBe("needs_input");
+
+		let result = replies.find(value => value.kind === "cadence:push-all-result") as unknown as {
+			pushed: number;
+			failed: number;
+		};
+		expect(result).toMatchObject({ pushed: 0, failed: 1 });
+	});
+
+	it("push-all pushes sequentially, finishing one item before starting the next", async () => {
+		replies = [];
+		let storage = new MemoryStorage();
+		let { sent, context } = room(storage);
+		await propose(context, [
+			PROPOSALS[0]!,
+			{ ...PROPOSALS[0]!, title: "Alert on refund failures" },
+		]);
+
+		sent.length = 0;
+		await pushAll(context, socket("ana", "ana"), { kind: "cadence:push-all", ts: 0, rid: rid() });
+
+		// No credential, so each item fails closed in turn — one item's broadcast
+		// completes before the next item's begins (a parallel batch would interleave
+		// the two failures only if resolution itself yielded out of order; the
+		// awaited loop keeps them strictly in list order).
+		let order = sent
+			.filter(value => value.kind === "cadence:item")
+			.map(value => {
+				let item = value.item as { title: string; status: string };
+				return `${item.title}:${item.status}`;
+			});
+		expect(order).toEqual([
+			"Add refund webhook:failed",
+			"Alert on refund failures:failed",
+		]);
+	});
+	it("merge upserts a matched item in place, keeping its id, and appends the rest", async () => {
+		let storage = new MemoryStorage();
+		let { context } = room(storage);
+
+		await propose(context, PROPOSALS);
+		let before = await storage.cadence.list("room");
+		let refundId = before.find(item => item.title === "Add refund webhook")!.id;
+
+		// One item matches "Add refund webhook" (team+kind+title+op) — updated in
+		// place — and one is new.
+		let result = await propose(context, [
+			{
+				team: "payments",
+				op: "create",
+				kind: "work_item",
+				title: "Add refund webhook",
+				fields: { operation: "create", workspace_slug: "razorpay", team_id: "t-1", name: "Add refund webhook v2" },
+				confidence: 0.95,
+				needs: [],
+				status: "ready",
+				mcpServer: "cadence",
+				mcpTool: "work_item",
+			},
+			{
+				team: "risk",
+				op: "create",
+				kind: "work_item",
+				title: "Flag suspicious refunds",
+				fields: { operation: "create", workspace_slug: "razorpay", team_id: "t-2" },
+				confidence: 0.8,
+				needs: [],
+				status: "ready",
+				mcpServer: "cadence",
+				mcpTool: "work_item",
+			},
+		], "merge");
+
+		// The two originals plus one new = three; the matched one kept its id.
+		expect(result.count).toBe(3);
+		let after = await storage.cadence.list("room");
+		expect(after).toHaveLength(3);
+		let refund = after.find(item => item.title === "Add refund webhook")!;
+		expect(refund.id).toBe(refundId);
+		expect(refund.fields.name).toBe("Add refund webhook v2");
+		expect(refund.confidence).toBe(0.95);
+		expect(after.some(item => item.title === "Backfill refunds")).toBe(true);
+		expect(after.some(item => item.title === "Flag suspicious refunds")).toBe(true);
+	});
+
+	it("replace still regenerates the whole list", async () => {
+		let storage = new MemoryStorage();
+		let { context } = room(storage);
+
+		await propose(context, PROPOSALS);
+		await propose(context, [PROPOSALS[0]!], "replace");
+
+		let after = await storage.cadence.list("room");
+		expect(after).toHaveLength(1);
+		expect(after[0]!.title).toBe("Add refund webhook");
 	});
 });

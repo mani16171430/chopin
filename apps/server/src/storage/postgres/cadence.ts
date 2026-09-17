@@ -187,6 +187,78 @@ export class PostgresCadenceUpdateStore implements CadenceUpdateStore {
 			}) as Promise<CadenceUpdate[]>;
 		});
 
+	readonly merge = (
+		channelId: string,
+		items: ProposedCadenceUpdate[],
+		now: Date,
+	): Promise<CadenceUpdate[]> =>
+		this.#run("merge cadence updates", async () => {
+			return this.#sql.begin(async transaction => {
+				// Upsert identity: (team, kind, title, op), plus target_id for an update.
+				for (let proposed of items) {
+					let matches = await transaction<{ id: string }[]>`
+						SELECT id FROM channel_cadence_updates
+						WHERE channel_id = ${channelId}
+							AND team = ${proposed.team}
+							AND kind = ${proposed.kind}
+							AND title = ${proposed.title}
+							AND op = ${proposed.op}
+							AND (
+								${proposed.op} <> 'update'
+								OR target_id IS NOT DISTINCT FROM ${proposed.targetId ?? null}
+							)
+						LIMIT 1
+					`;
+					let existing = matches[0];
+					if (existing) {
+						await transaction`
+							UPDATE channel_cadence_updates SET
+								fields = ${JSON.stringify(proposed.fields)}::jsonb,
+								confidence = ${proposed.confidence},
+								needs = ${JSON.stringify(proposed.needs ?? [])}::jsonb,
+								status = ${proposed.status},
+								mcp_server = ${proposed.mcpServer},
+								mcp_tool = ${proposed.mcpTool},
+								target_id = ${proposed.targetId ?? null},
+								updated_at = ${now}
+							WHERE channel_id = ${channelId} AND id = ${existing.id}
+						`;
+					} else {
+						await transaction`
+							INSERT INTO channel_cadence_updates (
+								id, channel_id, team, op, target_id, kind, title, fields,
+								confidence, needs, status, mcp_server, mcp_tool, created_at, updated_at
+							)
+							VALUES (
+								${crypto.randomUUID()},
+								${channelId},
+								${proposed.team},
+								${proposed.op},
+								${proposed.targetId ?? null},
+								${proposed.kind},
+								${proposed.title},
+								${JSON.stringify(proposed.fields)}::jsonb,
+								${proposed.confidence},
+								${JSON.stringify(proposed.needs ?? [])}::jsonb,
+								${proposed.status},
+								${proposed.mcpServer},
+								${proposed.mcpTool},
+								${now},
+								${now}
+							)
+						`;
+					}
+				}
+				let rows = await transaction<Row[]>`
+					SELECT ${this.#sql.unsafe(COLUMNS)}
+					FROM channel_cadence_updates
+					WHERE channel_id = ${channelId}
+					ORDER BY team ASC, title ASC
+				`;
+				return rows.map(item);
+			}) as Promise<CadenceUpdate[]>;
+		});
+
 	readonly updateFields = (
 		channelId: string,
 		id: string,

@@ -213,7 +213,7 @@ class CopilotSummaryEngine {
 		source: string,
 	): Promise<{ description: string; model: string }> {
 		if (execution.credential.kind !== "active-planner") {
-			throw new Error("Document descriptions require an active Planner owner.");
+			throw new Error("Document descriptions require an active Clasher owner.");
 		}
 		let credential = execution.credential;
 		let slot: ResultSlot | undefined;

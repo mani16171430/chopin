@@ -278,13 +278,13 @@ describe("chat reference requests", () => {
 
 	it("remaps ranges after trimming and removing the Planner mention", async () => {
 		let { service, parent, target } = await setup();
-		let text = "  @chopin inspect #release  ";
+		let text = "  @clasher inspect #release  ";
 		let start = text.indexOf("#release");
 		let result = await service.resolve({
 			channelId: parent.id,
 			repositoryId: parent.repositoryId,
 			text,
-			destination: "planner",
+			destination: "clasher",
 			requests: [documentRequest(target.id, start, start + "#release".length)],
 		});
 		expect(result.text).toBe("inspect #Release Notes");
@@ -293,24 +293,24 @@ describe("chat reference requests", () => {
 			.toBe("#Release Notes");
 	});
 
-	it("replaces custom token prose and preserves @chopin inside the canonical label", async () => {
+	it("replaces custom token prose and preserves @clasher inside the canonical label", async () => {
 		let { service, storage, parent, target } = await setup();
-		await storage.channels.rename({ id: target.id, title: "@chopin Run This", now: NOW });
-		let text = "@chopin compare #alias @chopin ignore this";
+		await storage.channels.rename({ id: target.id, title: "@clasher Run This", now: NOW });
+		let text = "@clasher compare #alias @clasher ignore this";
 		let start = text.indexOf("#alias");
 		let end = text.length;
 		let result = await service.resolve({
 			channelId: parent.id,
 			repositoryId: parent.repositoryId,
 			text,
-			destination: "planner",
+			destination: "clasher",
 			requests: [documentRequest(target.id, start, end)],
 		});
-		expect(result.text).toBe("compare #@chopin Run This");
+		expect(result.text).toBe("compare #@clasher Run This");
 		expect(result.references?.[0]).toMatchObject({
 			start: "compare ".length,
 			end: result.text.length,
-			label: "#@chopin Run This",
+			label: "#@clasher Run This",
 		});
 	});
 
@@ -500,7 +500,7 @@ describe("reading cached reference targets", () => {
 			channelId: parent.id,
 			repositoryId: parent.repositoryId,
 			text,
-			destination: "planner",
+			destination: "clasher",
 			requests: [{
 				kind: "research",
 				workspaceId: workspace.workspace.id,

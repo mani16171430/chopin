@@ -318,7 +318,7 @@ describe("tool calls", () => {
 		expect(chat.entries[0]?.tools?.[0]).toMatchObject({
 			name: "read_reference",
 			status: "done",
-			result: "Reference content was returned privately to the Planner.",
+			result: "Reference content was returned privately to Clasher.",
 		});
 		expect(JSON.stringify(chat.entries)).not.toContain("PRIVATE REFERENCED SOURCE");
 	});

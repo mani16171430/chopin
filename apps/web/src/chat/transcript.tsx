@@ -113,7 +113,7 @@ function MessageBody(
 	},
 ) {
 	let text = displayText(message.text) ? message.text : message.author.kind === "member"
-		? "Ask Planner"
+		? "Ask Clasher"
 		: "";
 
 	return (
@@ -155,7 +155,7 @@ function MessageGroup(
 	},
 ) {
 	let first = item.messages[0]!;
-	let name = item.author.kind === "agent" ? "Planner" : capitalize(item.author.handle);
+	let name = item.author.kind === "agent" ? "Clasher" : capitalize(item.author.handle);
 
 	return (
 		<div

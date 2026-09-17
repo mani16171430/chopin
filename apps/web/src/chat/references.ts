@@ -278,15 +278,15 @@ export function addressedOutsideReferences(
 /**
  * Build the trimmed wire payload without allowing display text to identify a target.
  *
- * `sessionActive` is the caller's own private Planner toggle: while it is on,
- * their message goes to the Planner without needing an explicit mention. The
+ * `sessionActive` is the caller's own private Clasher toggle: while it is on,
+ * their message goes to Clasher without needing an explicit mention. The
  * server enforces the same override for the same principal, so a stale tab
  * cannot disagree.
  */
 export function chatSendPayload(
 	text: string,
 	references: ReferenceDraft[],
-	plannerEnabled: boolean,
+	clasherEnabled: boolean,
 	requestId: string,
 	referencesEnabled = true,
 	sessionActive = false,
@@ -324,8 +324,8 @@ export function chatSendPayload(
 	return {
 		requestId,
 		text: value,
-		to: plannerEnabled && (sessionActive || addressedOutsideReferences(value, requests))
-			? "planner"
+		to: clasherEnabled && (sessionActive || addressedOutsideReferences(value, requests))
+			? "clasher"
 			: "room",
 		...(requests.length > 0 ? { references: requests } : {}),
 	};

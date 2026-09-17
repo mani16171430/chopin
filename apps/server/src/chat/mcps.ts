@@ -1,10 +1,10 @@
 /**
- * Channel-scoped MCP servers a chat's Planner may call.
+ * Channel-scoped MCP servers a chat's Clasher may call.
  *
  * Definitions are shared by the channel; credentials are per (channel, name,
  * principal) and sealed with the channel-and-principal-bound AAD before they
  * reach storage. Adding or removing an MCP, or a member setting their own
- * credential, refreshes the room's Planner session so the next turn rebuilds
+ * credential, refreshes the room's Clasher session so the next turn rebuilds
  * its tool list.
  */
 

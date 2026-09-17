@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 
-import { askClash, ClashError, getTurnEvents } from "./ask-clash";
+import { clashInDepth, ClashError, getTurnEvents } from "./clash-in-depth";
 
-import type { Fetcher } from "./ask-clash";
+import type { Fetcher } from "./clash-in-depth";
 import type { ClashConfig } from "../config";
 
 // Tests write the call log to a scratch dir, never the real logs/.
-process.env.ASK_CLASH_LOG_DIR = await import("node:fs/promises").then(fs =>
-	fs.mkdtemp("/tmp/ask-clash-test-")
+process.env.CLASH_IN_DEPTH_LOG_DIR = await import("node:fs/promises").then(fs =>
+	fs.mkdtemp("/tmp/clash-in-depth-test-")
 );
 
 const CONFIG: ClashConfig = {
@@ -75,7 +75,7 @@ test("create → poll → completed returns result_text, with the bearer key on 
 		},
 	]);
 
-	let result = await askClash(CONFIG, "why is pg-router erroring", fetcher, FAST);
+	let result = await clashInDepth(CONFIG, "why is pg-router erroring", fetcher, FAST);
 
 	expect(result).toBe("the answer");
 	expect(calls[0]).toMatchObject({
@@ -99,7 +99,7 @@ test("a failed turn surfaces the platform's reason, never the key", async () => 
 		},
 	]);
 
-	let result = await askClash(CONFIG, "q", fetcher, FAST);
+	let result = await clashInDepth(CONFIG, "q", fetcher, FAST);
 
 	expect(result).toContain("sandbox exploded");
 	expect(result).not.toContain("ak_live");
@@ -126,7 +126,7 @@ test("a dropped poll socket is retried until the run completes", async () => {
 		};
 	};
 
-	let result = await askClash(CONFIG, "q", fetcher, FAST);
+	let result = await clashInDepth(CONFIG, "q", fetcher, FAST);
 
 	expect(result).toBe("the answer");
 	expect(polls).toBe(3);
@@ -135,7 +135,7 @@ test("a dropped poll socket is retried until the run completes", async () => {
 test("a poll that keeps failing past the deadline surfaces the transport error", async () => {
 	let caught: unknown;
 	try {
-		await askClash(CONFIG, "q", ALWAYS_DOWN, { intervalMs: 1, timeoutMs: 5 });
+		await clashInDepth(CONFIG, "q", ALWAYS_DOWN, { intervalMs: 1, timeoutMs: 5 });
 	} catch (err) {
 		caught = err;
 	}
@@ -151,7 +151,7 @@ test("waiting_for_input cancels and explains", async () => {
 		{ status: 200, body: { id: "run-1", current_turn: { id: "turn-1", status: "cancelled" } } },
 	]);
 
-	let result = await askClash(CONFIG, "q", fetcher, FAST);
+	let result = await clashInDepth(CONFIG, "q", fetcher, FAST);
 
 	expect(result).toContain("waiting for input");
 	expect(calls.at(-1)?.url).toBe("https://platform.example/v2/runs/run-1/cancel");
@@ -167,13 +167,13 @@ test("an unknown status is not terminal — the run keeps polling", async () => 
 		},
 	]);
 
-	expect(await askClash(CONFIG, "q", fetcher, FAST)).toBe("ok");
+	expect(await clashInDepth(CONFIG, "q", fetcher, FAST)).toBe("ok");
 });
 
 test("a rejected credential is a ClashError that carries no key material", async () => {
 	let { fetcher } = scripted([{ status: 401, body: { message: "unauthenticated" } }]);
 
-	let error = await askClash(CONFIG, "q", fetcher, FAST).catch(err => err);
+	let error = await clashInDepth(CONFIG, "q", fetcher, FAST).catch(err => err);
 
 	expect(error).toBeInstanceOf(ClashError);
 	expect(error.message).toContain("credentials");
@@ -183,7 +183,7 @@ test("a rejected credential is a ClashError that carries no key material", async
 test("a platform 5xx reports the status and the platform's message", async () => {
 	let { fetcher } = scripted([{ status: 503, body: { message: "harness unavailable" } }]);
 
-	let error = await askClash(CONFIG, "q", fetcher, FAST).catch(err => err);
+	let error = await clashInDepth(CONFIG, "q", fetcher, FAST).catch(err => err);
 
 	expect(error).toBeInstanceOf(ClashError);
 	expect(error.message).toContain("503");
@@ -193,7 +193,7 @@ test("a platform 5xx reports the status and the platform's message", async () =>
 test("a run with no turn is a client-visible error, not a crash", async () => {
 	let { fetcher } = scripted([{ status: 201, body: { id: "run-1", current_turn: null } }]);
 
-	let error = await askClash(CONFIG, "q", fetcher, FAST).catch(err => err);
+	let error = await clashInDepth(CONFIG, "q", fetcher, FAST).catch(err => err);
 	expect(error).toBeInstanceOf(ClashError);
 });
 

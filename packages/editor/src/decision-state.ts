@@ -1,6 +1,6 @@
 import type { QuestionnaireEntry } from "./questionnaires";
 
-export type DecisionView = "plan" | "decisions" | "cadence";
+export type DecisionView = "plan" | "decisions" | "cadence" | "links";
 export type OpeningPhase = "initial" | "forced" | "complete";
 
 export type DecisionViewState = {

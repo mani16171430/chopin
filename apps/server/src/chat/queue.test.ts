@@ -14,7 +14,7 @@ import { ulid } from "@chopin/dialect";
 import * as Chat from "./service";
 
 import type { Server } from "bun";
-import type { Chat as Wire, Request } from "@chopin/protocol";
+import type { Cadence as CadenceWire, Chat as Wire, Request } from "@chopin/protocol";
 import type { Config } from "../config";
 import type { Plan } from "../plan/service";
 import type { Socket } from "../wire";
@@ -118,7 +118,7 @@ describe("sending to a named destination", () => {
 	it("keeps a planner message in the queue until its turn begins", async () => {
 		let { chat, context } = room({ busy: true });
 
-		await Chat.send(context, sender(), message("draft the migration", "planner"));
+		await Chat.send(context, sender(), message("draft the migration", "clasher"));
 
 		expect(chat.entries).toHaveLength(0);
 		expect(chat.waiting).toMatchObject([{
@@ -166,7 +166,7 @@ describe("sending to a named destination", () => {
 		await Chat.send(
 			context,
 			sender("ana", "U_ana", replies),
-			message("#release", "planner", [{
+			message("#release", "clasher", [{
 				kind: "document",
 				channelId: reference.channelId,
 				start: 0,
@@ -191,7 +191,7 @@ describe("sending to a named destination", () => {
 		await Chat.send(
 			context,
 			sender(),
-			message("#release", "planner", [{
+			message("#release", "clasher", [{
 				kind: "document",
 				channelId: reference.channelId,
 				start: 0,
@@ -218,7 +218,7 @@ describe("sending to a named destination", () => {
 		await Chat.send(
 			context,
 			sender("ana", "U_ana", replies),
-			message("#release", "planner", [{
+			message("#release", "clasher", [{
 				kind: "document",
 				channelId: crypto.randomUUID(),
 				start: 0,
@@ -239,14 +239,14 @@ describe("sending to a named destination", () => {
 	it("removes the typing shortcut from a queued planner message", async () => {
 		let { chat, context } = room({ busy: true });
 
-		await Chat.send(context, sender(), message("@chopin draft the migration", "planner"));
+		await Chat.send(context, sender(), message("@clasher draft the migration", "clasher"));
 
 		expect(chat.waiting[0]?.text).toBe("draft the migration");
 	});
 
 	it("keeps queued member identity and session provenance off the wire", async () => {
 		let { context, sent } = room({ busy: true });
-		await Chat.send(context, sender("ana", "U_private"), message("research this", "planner"));
+		await Chat.send(context, sender("ana", "U_private"), message("research this", "clasher"));
 
 		let queue = sent.findLast(frame => frame.kind === "chat:queue");
 		expect(queue?.waiting).toEqual([{
@@ -288,7 +288,7 @@ describe("sending to a named destination", () => {
 	it("keeps planner requests out of a queue when the agent is off", async () => {
 		let { chat, context, sent } = room({ agent: false });
 
-		await Chat.send(context, sender(), message("draft the migration", "planner"));
+		await Chat.send(context, sender(), message("draft the migration", "clasher"));
 
 		expect(chat.busy).toBe(false);
 		expect(chat.waiting).toHaveLength(0);
@@ -345,7 +345,7 @@ describe("sending to a named destination", () => {
 	it("acknowledges a queued entry with its durable future entry id", async () => {
 		let { chat, context } = room({ busy: true });
 		let replies: Sent[] = [];
-		await Chat.send(context, sender("ana", "U_ana", replies), message("next", "planner"));
+		await Chat.send(context, sender("ana", "U_ana", replies), message("next", "clasher"));
 		expect(replies).toEqual([
 			expect.objectContaining({ kind: "chat:send", rid: "request", queued: true }),
 		]);
@@ -412,9 +412,9 @@ describe("sending to a named destination", () => {
 			full.chat.waiting.push({ id: `waiting-${index}`, handle: "ana", text: `${index}` });
 		}
 		let fullReplies: Sent[] = [];
-		await Chat.send(full.context, sender("ana", "U_ana", fullReplies), message("full", "planner"));
+		await Chat.send(full.context, sender("ana", "U_ana", fullReplies), message("full", "clasher"));
 		expect(fullReplies).toEqual([
-			expect.objectContaining({ kind: "session:error", message: "the Planner queue is full" }),
+			expect.objectContaining({ kind: "session:error", message: "Clasher queue is full" }),
 		]);
 		expect(full.chat.waiting).toHaveLength(20);
 
@@ -478,13 +478,13 @@ describe("sending to a named destination", () => {
 		await Chat.send(
 			context,
 			sender(),
-			message("plan once", "planner", undefined, "first", requestId),
+			message("plan once", "clasher", undefined, "first", requestId),
 		);
 		let replies: Sent[] = [];
 		await Chat.send(
 			context,
 			sender("ana", "U_ana", replies),
-			message("plan once", "planner", undefined, "retry", requestId),
+			message("plan once", "clasher", undefined, "retry", requestId),
 		);
 		expect(chat.entries).toHaveLength(2);
 		expect(chat.entries.filter(entry => entry.id === requestId)).toHaveLength(1);
@@ -498,13 +498,13 @@ describe("sending to a named destination", () => {
 		await Chat.send(
 			context,
 			sender(),
-			message("queue once", "planner", undefined, "first", requestId),
+			message("queue once", "clasher", undefined, "first", requestId),
 		);
 		let replies: Sent[] = [];
 		await Chat.send(
 			context,
 			sender("ana", "U_ana", replies),
-			message("queue once", "planner", undefined, "retry", requestId),
+			message("queue once", "clasher", undefined, "retry", requestId),
 		);
 		expect(chat.waiting).toHaveLength(1);
 		expect(replies[0]).toMatchObject({ id: requestId, queued: true });
@@ -515,7 +515,7 @@ describe("sending to a named destination", () => {
 		await Chat.send(
 			context,
 			sender("ana", "U_ana", startedReplies),
-			message("queue once", "planner", undefined, "started-retry", requestId),
+			message("queue once", "clasher", undefined, "started-retry", requestId),
 		);
 		expect(chat.entries).toHaveLength(1);
 		expect(startedReplies[0]).toMatchObject({ id: requestId, queued: false });
@@ -695,6 +695,46 @@ describe("instructing the agent without a message", () => {
 		// would leave it there until someone withdrew it.
 		expect(chat.waiting).toHaveLength(0);
 		expect(said(sent)).toHaveLength(2);
+	});
+});
+
+describe("proposing Cadence work from a selected passage", () => {
+	function passage(text: string, rid = "request"): Request<CadenceWire.Propose> {
+		return { kind: "cadence:propose", rid, ts: 0, passage: text } as Request<CadenceWire.Propose>;
+	}
+
+	it("refuses an empty or whitespace-only passage", () => {
+		let { chat, context } = room({ busy: false });
+		let frames: Sent[] = [];
+		Chat.proposeFromPassage(context, sender("ana", "U_ana", frames), passage("   "));
+
+		expect(chat.busy).toBe(false);
+		expect(frames.some(frame =>
+			frame.kind === "session:error"
+			&& (frame as { message?: string }).message === "invalid passage"
+		)).toBe(true);
+	});
+
+	it("refuses a passage longer than the cap", () => {
+		let { chat, context } = room({ busy: false });
+		let frames: Sent[] = [];
+		Chat.proposeFromPassage(context, sender("ana", "U_ana", frames), passage("x".repeat(8_001)));
+
+		expect(chat.busy).toBe(false);
+		expect(frames.some(frame =>
+			frame.kind === "session:error"
+			&& (frame as { message?: string }).message === "invalid passage"
+		)).toBe(true);
+	});
+
+	it("queues the passage turn behind a running one", () => {
+		let { chat, context, sent } = room({ busy: true });
+		Chat.proposeFromPassage(context, sender("ana"), passage("Refund webhooks must be idempotent."));
+
+		expect(chat.waiting).toHaveLength(1);
+		expect(chat.waiting[0]!.text).toContain("Refund webhooks must be idempotent.");
+		expect(chat.waiting[0]!.text).toContain("mode: \"merge\"");
+		expect(sent.some(frame => frame.kind === "chat:queue")).toBe(true);
 	});
 });
 

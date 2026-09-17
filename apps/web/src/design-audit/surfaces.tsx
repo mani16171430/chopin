@@ -25,7 +25,7 @@ let CHAT_ENTRIES: Chat.Entry[] = [
 	},
 	{
 		author: { kind: "agent" },
-		id: "audit-planner",
+		id: "audit-clasher",
 		text: "I’ll compare the existing states and propose a smaller, consistent pattern.",
 		tools: [
 			{ id: "audit-tool-1", name: "read_plan", status: "done", took: 420 },
@@ -183,7 +183,7 @@ function Navigation() {
 function Conversation() {
 	return (
 		<AuditPlate
-			description="Member, Planner, tool activity, queued work, composer, and error states."
+			description="Member, Clasher, tool activity, queued work, composer, and error states."
 			item="chat"
 			title="Conversation"
 		>

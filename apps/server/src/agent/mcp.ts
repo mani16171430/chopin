@@ -1,7 +1,7 @@
 /**
  * Outbound MCP client for channel-scoped servers.
  *
- * The Planner's tools are all local Chopin `Tool`s; a remote MCP server is
+ * Clasher's tools are all local Chopin `Tool`s; a remote MCP server is
  * adapted into that shape here. Each remote tool becomes one namespaced
  * `mcp__<server>__<tool>` entry whose handler performs the remote call with
  * the caller's own sealed credential. There is no shared credential — a

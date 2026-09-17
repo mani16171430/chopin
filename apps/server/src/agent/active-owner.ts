@@ -38,7 +38,7 @@ function credentialKey(sessionId: string, revision: number): string {
 	return `${sessionId}\u0000${revision}`;
 }
 
-/** Resolves only an existing durable Planner owner; it can never claim ownership. */
+/** Resolves only an existing durable Clasher owner; it can never claim ownership. */
 export class ActiveOwnerBindings {
 	#auth: Pick<HostedAuth, "admission" | "clock" | "github" | "sessions" | "storage">;
 	#states = new Set<State>();

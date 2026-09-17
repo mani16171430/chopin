@@ -17,18 +17,19 @@ import type { Chat as Wire } from "@chopin/protocol";
 
 describe("addressing", () => {
 	it("recognises the mention wherever it appears", () => {
-		expect(addressed("@chopin draft the auth section")).toBe(true);
-		expect(addressed("ok, @chopin go ahead")).toBe(true);
-		expect(addressed("do that @chopin")).toBe(true);
-		expect(addressed("@chopin")).toBe(true);
+		expect(addressed("@clasher draft the auth section")).toBe(true);
+		expect(addressed("ok, @clasher go ahead")).toBe(true);
+		expect(addressed("do that @clasher")).toBe(true);
+		expect(addressed("@clasher")).toBe(true);
 	});
 
 	it("does not care about case", () => {
-		expect(addressed("@CHOPIN please")).toBe(true);
-		expect(addressed("@Chopin please")).toBe(true);
+		expect(addressed("@CLASHER please")).toBe(true);
+		expect(addressed("@Clasher please")).toBe(true);
 	});
 
 	it("does not recognise the retired mention", () => {
+		expect(addressed("@chopin draft the auth section")).toBe(false);
 		expect(addressed("@ai draft the auth section")).toBe(false);
 	});
 
@@ -44,21 +45,21 @@ describe("addressing", () => {
 	 * worse than missing one.
 	 */
 	it("is not fooled by a longer token", () => {
-		expect(addressed("mail me at hi@chopin.dev")).toBe(false);
-		expect(addressed("see @chopina for that")).toBe(false);
-		expect(addressed("the @@chopin thing")).toBe(false);
+		expect(addressed("mail me at hi@clasher.dev")).toBe(false);
+		expect(addressed("see @clashers for that")).toBe(false);
+		expect(addressed("the @@clasher thing")).toBe(false);
 	});
 });
 
 describe("the instruction", () => {
 	it("strips the summons, which is addressing rather than content", () => {
-		expect(instruction("@chopin draft the auth section")).toBe("draft the auth section");
-		expect(instruction("ok @chopin go ahead")).toBe("ok go ahead");
+		expect(instruction("@clasher draft the auth section")).toBe("draft the auth section");
+		expect(instruction("ok @clasher go ahead")).toBe("ok go ahead");
 	});
 
 	it("is empty for a bare mention", () => {
-		expect(instruction("@chopin")).toBe("");
-		expect(instruction("  @chopin  ")).toBe("");
+		expect(instruction("@clasher")).toBe("");
+		expect(instruction("  @clasher  ")).toBe("");
 	});
 });
 
@@ -115,7 +116,7 @@ describe("backscroll", () => {
 
 describe("composing a turn", () => {
 	it("sends the message alone when nothing was said before it", () => {
-		expect(compose([], "alice", "@chopin draft the auth section"))
+		expect(compose([], "alice", "@clasher draft the auth section"))
 			.toBe("@alice: draft the auth section");
 	});
 
@@ -126,7 +127,7 @@ describe("composing a turn", () => {
 				{ handle: "bob", text: "probably, the OAuth bit is unclear" },
 			],
 			"alice",
-			"@chopin draft the auth section",
+			"@clasher draft the auth section",
 		);
 
 		expect(prompt).toContain("Said in the room since your last turn:");
@@ -144,7 +145,7 @@ describe("composing a turn", () => {
 		let prompt = compose(
 			[{ handle: "bob", text: "let us go with OAuth" }],
 			"alice",
-			"@chopin",
+			"@clasher",
 		);
 
 		expect(prompt).toContain("@bob: let us go with OAuth");
@@ -167,18 +168,18 @@ describe("composing a turn", () => {
 		expect(prompt).not.toContain(earlier.href);
 	});
 
-	it("does not interpret @chopin inside an annotated canonical label", () => {
-		let text = "Read #@chopin Notes";
+	it("does not interpret @clasher inside an annotated canonical label", () => {
+		let text = "Read #@clasher Notes";
 		let reference = {
 			id: "ref-notes",
 			start: "Read ".length,
 			end: text.length,
-			label: "#@chopin Notes",
+			label: "#@clasher Notes",
 		} as Wire.Reference;
 		expect(annotatedText(text, [reference])).toBe(
-			"Read #@chopin Notes [reference id: ref-notes]",
+			"Read #@clasher Notes [reference id: ref-notes]",
 		);
-		expect(compose([], "ana", text, [reference])).toContain("#@chopin Notes");
+		expect(compose([], "ana", text, [reference])).toContain("#@clasher Notes");
 	});
 
 	it("bounds the model catalog independently of reference hrefs", () => {

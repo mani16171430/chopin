@@ -251,7 +251,7 @@ describe("research card", () => {
 		expect(markup).toContain("Rollout evidence");
 		expect(markup).toContain("Public evidence supports the planned rollout date.");
 		expect(markup).toContain("1 source");
-		expect(markup).toContain("Researched by Planner");
+		expect(markup).toContain("Researched by Clasher");
 		expect(markup).toContain("Open Rollout evidence");
 		expect(markup.match(/Open Rollout evidence/g)).toHaveLength(1);
 		expect(markup).toContain('aria-label="Open Rollout evidence"');

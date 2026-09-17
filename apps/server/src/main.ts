@@ -16,6 +16,7 @@ import { registerAuthRoutes } from "./auth/routes";
 import * as Chat from "./chat/service";
 import * as Mcps from "./chat/mcps";
 import * as Cadence from "./cadence/service";
+import * as Links from "./links/service";
 import { CHAT_CAPABILITIES, incomingFrame } from "./chat/incoming";
 import { ReferenceService } from "./chat/references";
 import { registerChannelRoutes } from "./channels/routes";
@@ -336,8 +337,24 @@ async function receive(ws: Socket, raw: string): Promise<void> {
 			if (room.plan) Chat.generateCadence(chat(room, ws), ws);
 			return;
 
+		case "cadence:propose":
+			if (room.plan) Chat.proposeFromPassage(chat(room, ws), ws, frame);
+			return;
+
 		case "doc:generate-ai":
 			if (room.plan) Chat.generateAiDoc(chat(room, ws), ws);
+			return;
+
+		case "links:generate":
+			if (room.plan) Chat.generateLinks(chat(room, ws), ws);
+			return;
+
+		case "links:list":
+			if (room.plan) await Links.list(chat(room, ws), ws, frame);
+			return;
+
+		case "links:remove":
+			if (room.plan) await Links.remove(chat(room, ws), ws, frame);
 			return;
 
 		case "cadence:field":
@@ -346,6 +363,10 @@ async function receive(ws: Socket, raw: string): Promise<void> {
 
 		case "cadence:push":
 			if (room.plan) await Cadence.push(chat(room, ws), ws, frame);
+			return;
+
+		case "cadence:push-all":
+			if (room.plan) await Cadence.pushAll(chat(room, ws), ws, frame);
 			return;
 
 		case "cadence:list":
@@ -1021,7 +1042,7 @@ async function credentialsWillRotate(sessionId: string, revision: number): Promi
 			() => true,
 			sessionId,
 			revision,
-			"GitHub credentials refreshed, so the Planner session was restarted. Ask it to continue.",
+			"GitHub credentials refreshed, so the Clasher session was restarted. Ask it to continue.",
 		),
 		jobs,
 	]);

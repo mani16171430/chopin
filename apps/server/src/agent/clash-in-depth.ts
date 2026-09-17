@@ -23,15 +23,15 @@ import { join } from "node:path";
 import type { ClashConfig } from "../config";
 
 /**
- * Every `ask_clash` call is logged — the question sent and the answer (or
- * failure) returned — as one JSON line per call, to `logs/ask_clash.log`.
+ * Every `clash_in_depth` call is logged — the question sent and the answer (or
+ * failure) returned — as one JSON line per call, to `logs/clash_in_depth.log`.
  * The directory is git-ignored; the log is a local audit trail, never shipped.
  * The API key is never in it. Logging is best-effort and never fails a call.
  */
 // Read per call so a test can point the log elsewhere before the first call.
 function logFile(): { dir: string; path: string } {
-	let dir = process.env.ASK_CLASH_LOG_DIR || "logs";
-	return { dir, path: join(dir, "ask_clash.log") };
+	let dir = process.env.CLASH_IN_DEPTH_LOG_DIR || "logs";
+	return { dir, path: join(dir, "clash_in_depth.log") };
 }
 
 type ClashLogEntry = {
@@ -49,7 +49,7 @@ async function logCall(entry: ClashLogEntry): Promise<void> {
 		await mkdir(dir, { recursive: true });
 		await appendFile(path, JSON.stringify(entry) + "\n");
 	} catch (err) {
-		console.error("[ask_clash] could not write the call log", err);
+		console.error("[clash_in_depth] could not write the call log", err);
 	}
 }
 
@@ -246,7 +246,7 @@ export async function getTurnEvents(
 }
 
 /**
- * The `ask_clash` tool's handler body: run the question and wait.
+ * The `clash_in_depth` tool's handler body: run the question and wait.
  *
  * The wait is bounded; a turn that outlives the cap is cancelled and reported
  * as still-working so the planner can ask again rather than leaving a run
@@ -254,7 +254,7 @@ export async function getTurnEvents(
  * the same way. The answer goes back as the tool result string; the room
  * already sees the tool's start and completion around it.
  */
-export async function askClash(
+export async function clashInDepth(
 	config: ClashConfig,
 	question: string,
 	fetcher?: Fetcher,

@@ -46,6 +46,7 @@ export function CadenceUpdates(
 ) {
 	let [items, setItems] = useState<Wire.Update[]>([]);
 	let [generating, setGenerating] = useState(false);
+	let [pushingAll, setPushingAll] = useState(false);
 
 	useEffect(() => {
 		if (!wire || !connected) return;
@@ -57,6 +58,9 @@ export function CadenceUpdates(
 			wire.on<Wire.Item>("cadence:item", frame => {
 				setItems(current => current.map(item => item.id === frame.item.id ? frame.item : item));
 			}),
+			wire.on<Wire.PushAllResult>("cadence:push-all-result", () => {
+				setPushingAll(false);
+			}),
 		];
 		wire.send("cadence:list");
 		return () => {
@@ -67,11 +71,18 @@ export function CadenceUpdates(
 	useEffect(() => onItems?.(items), [items, onItems]);
 
 	let groups = useMemo(() => grouped(items), [items]);
+	let readyCount = items.filter(item => item.status === "ready").length;
 
 	let generate = () => {
 		if (!wire) return;
 		setGenerating(true);
 		wire.send("cadence:generate");
+	};
+
+	let pushAll = () => {
+		if (!wire) return;
+		setPushingAll(true);
+		wire.send("cadence:push-all", {});
 	};
 
 	return (
@@ -80,14 +91,26 @@ export function CadenceUpdates(
 				<h2 className="text-[14px] font-medium text-text-tertiary" id={headingId} tabIndex={-1}>
 					Cadence Updates
 				</h2>
-				<button
-					className="btn btn-sm bg-brand text-page disabled:opacity-50"
-					disabled={!connected || generating}
-					onClick={generate}
-					type="button"
-				>
-					{generating ? "Generating…" : "Generate updates"}
-				</button>
+				<div className="flex items-center gap-2">
+					{readyCount > 0 && (
+						<button
+							className="btn btn-sm bg-brand text-page disabled:opacity-50"
+							disabled={!connected || pushingAll}
+							onClick={pushAll}
+							type="button"
+						>
+							{pushingAll ? "Pushing…" : `Push ready (${readyCount})`}
+						</button>
+					)}
+					<button
+						className="btn btn-sm bg-brand text-page disabled:opacity-50"
+						disabled={!connected || generating}
+						onClick={generate}
+						type="button"
+					>
+						{generating ? "Generating…" : "Generate updates"}
+					</button>
+				</div>
 			</div>
 
 			{items.length === 0 && (

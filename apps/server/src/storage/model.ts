@@ -107,7 +107,7 @@ export type RepositoryChannel = ChannelRecord & {
 
 /**
  * Narrow a channel to one with a repository. Code that operates on a channel's
- * repo — the repository-scoped routes, the Planner's repository tools, research
+ * repo — the repository-scoped routes, Clasher's repository tools, research
  * publication — requires one; a general document has none until it is moved.
  */
 export function isRepositoryChannel(channel: ChannelRecord): channel is RepositoryChannel {
@@ -856,4 +856,36 @@ export type ProposedCadenceUpdate = {
 	status: "needs_input" | "ready";
 	mcpServer: string;
 	mcpTool: string;
+};
+
+/**
+ * A relation a channel's document holds to another entity — the "Links" graph.
+ *
+ * The planner connects a document to the repositories, pull requests and AI
+ * Docs it is about. `kind` discriminates the card the client renders; `refKey`
+ * is the canonical identity that makes linking idempotent (`owner/name` for a
+ * repo, `owner/name#123` for a PR, the aidocs document id for an AI doc).
+ * `title`/`subtitle`/`url` are the lean card fields. Non-secret, in the clear.
+ */
+export type ChannelLink = {
+	id: string;
+	channelId: string;
+	kind: "repo" | "pull_request" | "ai_doc";
+	refKey: string;
+	title: string;
+	subtitle?: string;
+	url?: string;
+	/** Handle of whoever linked it — the planner records the asking member. */
+	createdBy: string;
+	createdAt: Date;
+};
+
+/** A link as the tool supplies it, before storage stamps id/time. */
+export type NewChannelLink = {
+	kind: ChannelLink["kind"];
+	refKey: string;
+	title: string;
+	subtitle?: string;
+	url?: string;
+	createdBy: string;
 };

@@ -109,10 +109,12 @@ export declare namespace Session {
 	export type Ping = KIND<"session:ping">;
 }
 
+export type { Aidoc } from "./aidoc";
 export type { Cadence } from "./cadence";
 export type { Chat } from "./chat";
 export type { Comment } from "./comment";
 export type { Job } from "./job";
+export type { Links } from "./links";
 export type { Plan } from "./plan";
 export type { Question } from "./question";
 export type { Research } from "./research";
@@ -125,6 +127,7 @@ export type Incoming =
 	| import("./chat").Chat.Incoming
 	| import("./comment").Comment.Incoming
 	| import("./job").Job.Incoming
+	| import("./links").Links.Incoming
 	| import("./plan").Plan.Incoming
 	| import("./question").Question.Incoming;
 
@@ -135,6 +138,7 @@ export type Outgoing =
 	| import("./chat").Chat.Outgoing
 	| import("./comment").Comment.Outgoing
 	| import("./job").Job.Outgoing
+	| import("./links").Links.Outgoing
 	| import("./plan").Plan.Outgoing
 	| import("./question").Question.Outgoing
 	| import("./research").Research.Outgoing;

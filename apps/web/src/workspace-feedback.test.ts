@@ -46,6 +46,6 @@ test("live busy feedback stays immediate", () => {
 		}),
 	);
 
-	expect(markup).toContain('aria-label="Show chat pane, Planner working"');
+	expect(markup).toContain('aria-label="Show chat pane, Clasher working"');
 	expect(markup).not.toContain('data-motion-feedback="count"');
 });

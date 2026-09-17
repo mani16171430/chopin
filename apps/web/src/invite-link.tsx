@@ -120,7 +120,7 @@ export function InviteLinkCard({ channelId }: { channelId: string }) {
 					<span className="text-sm text-text-tertiary" role="status">Rotating...</span>
 				)}
 			</div>
-			<p className="text-xs text-text-tertiary">
+			<p className="text-[12px] text-text-tertiary">
 				Rotating replaces the link and signs out everyone the old link let in.
 			</p>
 		</div>

@@ -18,7 +18,7 @@ export type WorkspaceProfile = {
 	surface: WorkspaceSurface;
 };
 
-export type WorkspaceDestination = "plan" | "decisions" | "cadence" | "chat";
+export type WorkspaceDestination = "plan" | "decisions" | "cadence" | "links" | "chat";
 
 export type WorkspaceState = {
 	chatOpen: boolean;
@@ -63,7 +63,7 @@ export function workspaceProfile(
 }
 
 export function workspaceDestinations(): WorkspaceDestination[] {
-	return ["chat", "plan", "decisions", "cadence"];
+	return ["chat", "plan", "decisions", "cadence", "links"];
 }
 
 export function workspaceHeadingId(destination: WorkspaceDestination, scope?: string): string {
@@ -71,7 +71,7 @@ export function workspaceHeadingId(destination: WorkspaceDestination, scope?: st
 }
 
 export function storedDocumentView(value: string | null): DecisionView {
-	if (value === "decisions" || value === "cadence") return value;
+	if (value === "decisions" || value === "cadence" || value === "links") return value;
 	return "plan";
 }
 

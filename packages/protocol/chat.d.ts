@@ -95,12 +95,12 @@ export declare namespace Chat {
 		references?: Reference[];
 	};
 
-	/** Transient Planner turn state. */
+	/** Transient Clasher turn state. */
 	export type Turn = {
 		id: string;
 		handle: string;
 		started: number;
-		/** True after the Planner has sent non-empty prose. */
+		/** True after Clasher has sent non-empty prose. */
 		responded: boolean;
 	};
 
@@ -136,7 +136,7 @@ export declare namespace Chat {
 	};
 
 	export type Queue = KIND<"chat:queue"> & { waiting: Waiting[] };
-	export type Destination = "room" | "planner";
+	export type Destination = "room" | "clasher";
 
 	/**
 	 * Say something.
@@ -162,16 +162,16 @@ export declare namespace Chat {
 	export type Unqueue = KIND<"chat:unqueue"> & { id: string };
 
 	/**
-	 * Turn the room's shared Planner session on.
+	 * Turn the room's shared Clasher session on.
 	 *
-	 * While it is on, every member's message is treated as addressed to the
-	 * Planner — no per-message `@chopin` needed — so the room can jam with the
+	 * While it is on, every member's message is treated as addressed to
+	 * Clasher — no per-message `@clasher` needed — so the room can jam with the
 	 * model together. Shared and visible to the whole room. Ephemeral: resets
 	 * on a server restart or when the room is evicted.
 	 */
 	export type SessionStart = KIND<"chat:session-start">;
 
-	/** Turn the room's shared Planner session off. */
+	/** Turn the room's shared Clasher session off. */
 	export type SessionEnd = KIND<"chat:session-end">;
 
 	/**

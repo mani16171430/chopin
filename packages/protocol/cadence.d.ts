@@ -17,11 +17,13 @@ type KIND<K extends string> = Frame & { kind: K };
 export declare namespace Cadence {
 	export type Incoming =
 		| Request<Generate>
+		| Request<Propose>
 		| Request<Field>
 		| Request<Push>
+		| Request<PushAll>
 		| Request<List>;
 
-	export type Outgoing = Items | Item;
+	export type Outgoing = Items | Item | PushAllResult;
 
 	/** One proposed Cadence entity, grouped under `team`. Never carries a credential. */
 	export type Update = {
@@ -51,6 +53,13 @@ export declare namespace Cadence {
 	/** Regenerate the whole proposal list from the room's material. Any member. */
 	export type Generate = KIND<"cadence:generate">;
 
+	/**
+	 * Propose Cadence work for one selected passage of the document. Clasher
+	 * resolves it against the Cadence MCP and merges the result into the list
+	 * rather than replacing it. Any member.
+	 */
+	export type Propose = KIND<"cadence:propose"> & { passage: string };
+
 	/** Save a member's edits to one item's fields; the item becomes ready. Any member. */
 	export type Field = KIND<"cadence:field"> & {
 		id: string;
@@ -62,6 +71,12 @@ export declare namespace Cadence {
 	/** Create or update one ready item in Cadence, under the caller's credential. Any member. */
 	export type Push = KIND<"cadence:push"> & { id: string };
 
+	/**
+	 * Push every ready item in the room, one after another, under the caller's
+	 * credential. Any member. No payload — it acts on the room's ready items.
+	 */
+	export type PushAll = KIND<"cadence:push-all">;
+
 	/** Read the current list (also sent on join). */
 	export type List = KIND<"cadence:list">;
 
@@ -70,4 +85,7 @@ export declare namespace Cadence {
 
 	/** One item changed (e.g. a push result) — broadcast to the room. */
 	export type Item = KIND<"cadence:item"> & { item: Update };
+
+	/** Summary of a push-all, replied to the requester once the batch is done. */
+	export type PushAllResult = KIND<"cadence:push-all-result"> & { pushed: number; failed: number };
 }

@@ -49,7 +49,7 @@ const NUCLEO_ICONS: readonly IconCatalogueItem[] = [
 	{ name: "Document actions", source: documentActions },
 	{ name: "New document", source: newDocument },
 	{ name: "Chat", source: chat },
-	{ name: "Planner stop", source: plannerStop },
+	{ name: "Clasher stop", source: plannerStop },
 	{ icon: LinkPlusIcon, name: "Link plus" },
 	{ icon: MessagePlusIcon, name: "Message plus" },
 	{ icon: ArrowUpIcon, name: "Arrow up" },

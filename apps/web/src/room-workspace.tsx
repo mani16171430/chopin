@@ -18,6 +18,7 @@ import {
 
 import { Chat } from "./chat/chat";
 import { CadenceUpdates } from "./cadence/cadence";
+import { Links } from "./links/links";
 import { Mcps } from "./chat/mcps";
 import { rememberChannel } from "./channel-recovery";
 import { rememberGeneralChannel } from "./general-recovery";
@@ -347,7 +348,7 @@ export function RoomWorkspace(
 		}
 	};
 
-	let selectDestination = (destination: "plan" | "decisions" | "cadence") => {
+	let selectDestination = (destination: DecisionView) => {
 		selectView(destination, mode === "split");
 		dispatch({ type: "set-chat", open: false });
 	};
@@ -561,6 +562,7 @@ export function RoomWorkspace(
 					connection={status === "deleted" ? "closed" : status}
 					key={workspaceArchivedAt ? "archived" : "active"}
 					motionImmediately={settleMotionImmediately}
+					onCadence={passage => wire?.send("cadence:propose", { passage })}
 					onScrollTop={setPlanScrollTop}
 					questionMotion={QUESTION_MOTION}
 					questions={questions}
@@ -577,6 +579,14 @@ export function RoomWorkspace(
 					connected={status === "connected" && workspaceCanEdit}
 					headingId={workspaceIds.heading.cadence}
 					onItems={onCadenceItems}
+					wire={wire}
+				/>
+			}
+			links={
+				<Links
+					connected={status === "connected" && workspaceCanEdit}
+					headingId={workspaceIds.heading.links}
+					title={metadata.title}
 					wire={wire}
 				/>
 			}
